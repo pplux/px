@@ -4,7 +4,16 @@
 # px_sched
 Single Header C++ Task Scheduler 
 
-Written in C++11(only for thread API), with no dependency, and easy to integrate. See the [examples](https://github.com/pplux/px_sched/tree/master/examples).
+Written in C++11(only for thread API), with no dependency, and easy to integrate. See the examples: 
+[ex1.cpp](https://github.com/pplux/px/blob/master/examples/px_sched_example1.cpp),
+[ex2.cpp](https://github.com/pplux/px/blob/master/examples/px_sched_example2.cpp),
+[ex3.cpp](https://github.com/pplux/px/blob/master/examples/px_sched_example3.cpp),
+[ex4.cpp](https://github.com/pplux/px/blob/master/examples/px_sched_example4.cpp),
+[ex5.cpp](https://github.com/pplux/px/blob/master/examples/px_sched_example5.cpp),
+[ex6.cpp](https://github.com/pplux/px/blob/master/examples/px_sched_example6.cpp),
+[ex7.cpp](https://github.com/pplux/px/blob/master/examples/px_sched_example7.cpp).
+
+
 
 ## Goals:
 * Allow task oriented multihtread programmming without mutexes, locks, condition variables...
