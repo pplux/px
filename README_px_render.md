@@ -138,5 +138,8 @@ void Render {
 
 ## TODO's
 * [  ] improve documentation
-* [  ] Test WebGL, RaspberryPI, etc.., it should work
-* [  ] Add Vulkan, DX render backend 
+* [__] More tests! and examples
+* [__] Proper stencil support
+* [__] Compute shaders support
+* [  ] WebGL, RaspberryPI, etc.., it should work
+* [  ] Add Vulkan, DX render, other backends 
