@@ -131,13 +131,15 @@ void Render {
     ctx.submitDisplayList(std::move(dl));
   }
 }
-'''
+```
 
-*WIP*
-
+*WIP* *WIP* *WIP* *WIP* *WIP* *WIP*
 
 
 ## TODO's
 * [  ] improve documentation
-* [  ] Test WebGL, RaspberryPI, etc.., it should work
-* [  ] Add Vulkan, DX render backend 
+* [  ] More tests! and examples
+* [  ] Proper stencil support
+* [  ] Compute shaders support
+* [  ] WebGL, RaspberryPI, etc.., it should work
+* [  ] Add Vulkan, DX render, other backends 
