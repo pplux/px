@@ -10,11 +10,6 @@
     before you include this file in *one* C or C++ file to create the 
     implementation.
 
-    If you use sokol_app.h together with sokol_gfx.h, include both headers
-    in the implementation source file, and include sokol_app.h before
-    sokol_gfx.h since sokol_app.h will also include the required 3D-API 
-    headers.
-
     Optionally provide the following defines with your own implementations:
 
     SOKOL_ASSERT(c)     - your own assert macro (default: assert(c))
@@ -29,30 +24,31 @@
 
     FIXME: ERROR HANDLING (this will need an error callback function)
 
-    On Windows, a minimal 'GL header' and function loader is integrated which contains
-    just enough of GL for sokol_gfx.h. If you want to use your own GL
-    header-generator/loader instead, define SOKOL_WIN32_NO_GL_LOADER
-    before including the implementation part of sokol_app.h.
+    If you use sokol_app.h together with sokol_gfx.h, include both headers
+    in the implementation source file, and include sokol_app.h before
+    sokol_gfx.h since sokol_app.h will also include the required 3D-API 
+    headers.
 
+    On Windows, a minimal 'GL header' and function loader is integrated which
+    contains just enough of GL for sokol_gfx.h. If you want to use your own
+    GL header-generator/loader instead, define SOKOL_WIN32_NO_GL_LOADER
+    before including the implementation part of sokol_app.h.
 
     FEATURE OVERVIEW
     ================
-    sokol_app.h provides a simple cross-platform API which implements the
-    minimal 'application-wrapper' parts of a 3D application:
+    sokol_app.h provides an a minimalistic cross-platform API which
+    implements the 'application-wrapper' parts of a 3D application:
 
-    - a common entry function
+    - a common application entry function
     - creates a window and 3D-API context/device with a 'default framebuffer'
     - makes the rendered frame visible
     - provides keyboard-, mouse- and low-level touch-events
-    - platforms: MacOS, iOS, HTML5, (Win32, Linux, Android, RaspberryPi)
+    - platforms: MacOS, iOS, HTML5, Win32 (planned: Linux, Android, RaspberryPi)
     - 3D-APIs: Metal, D3D11, GL3.2, GLES2, GLES3, WebGL, WebGL2
-
-    sokol_app.h is not a whole 3D-API wrapper, but also does not depend
-    on a specific 3D-API wrapper.
 
     HOW TO USE
     ==========
-    FIXME
+    FIXME!
 
     zlib/libpng license
 
@@ -242,9 +238,10 @@ typedef struct {
 } sapp_touchpoint;
 
 typedef enum {
-    SAPP_MOUSEBUTTON_LEFT = 0,
-    SAPP_MOUSEBUTTON_RIGHT = 1,
-    SAPP_MOUSEBUTTON_MIDDLE = 2,
+    SAPP_MOUSEBUTTON_NONE = 0,
+    SAPP_MOUSEBUTTON_LEFT = 1,
+    SAPP_MOUSEBUTTON_RIGHT = 2,
+    SAPP_MOUSEBUTTON_MIDDLE = 3,
 } sapp_mousebutton;
 
 enum {
@@ -343,9 +340,14 @@ extern const void* sapp_d3d11_get_depth_stencil_view(void);
     #if !defined(SOKOL_GLES3) && !defined(SOKOL_GLES2)
     #error("sokol_app.h: unknown 3D API selected for emscripten, must be SOKOL_GLES3 or SOKOL_GLES2")
     #endif
-#elif defined(_WIN32) 
+#elif defined(_WIN32)
+    /* Windows (D3D11 or GL) */
     #if !defined(SOKOL_D3D11) && !defined(SOKOL_GLCORE33)
     #error("sokol_app.h: unknown 3D API selected for Win32, must be SOKOL_D3D11 or SOKOL_GLCORE33")
+    #endif
+#elif defined(linux)
+    #if !defined(SOKOL_GLCORE33)
+    #error("sokol_app.h: unknown 3D API selected for Linux, must be SOKOL_GLCORE33")
     #endif
 #else
 #error "sokol_app.h: Unknown platform"
@@ -468,7 +470,6 @@ _SOKOL_PRIVATE void _sapp_init_state(sapp_desc* desc, int argc, char* argv[]) {
     else {
         _sapp_strcpy("sokol_app", _sapp.window_title, sizeof(_sapp.window_title));
     }
-    _sapp.window_title[_SAPP_MAX_TITLE_LENGTH-1] = 0;
     _sapp.dpi_scale = 1.0f;
 }
 
@@ -508,7 +509,6 @@ _SOKOL_PRIVATE void _sapp_frame(void) {
 
 /*== MacOS ===================================================================*/
 #if !TARGET_OS_IPHONE
-#import <Cocoa/Cocoa.h>
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
 
@@ -673,6 +673,20 @@ _SOKOL_PRIVATE void _sapp_macos_frame(void) {
 
 @implementation _sapp_app_delegate
 - (void)applicationDidFinishLaunching:(NSNotification*)aNotification {
+    if (_sapp.desc.fullscreen) {
+        NSRect screen_rect = [[NSScreen mainScreen] frame];
+        _sapp.window_width = screen_rect.size.width;
+        _sapp.window_height = screen_rect.size.height;
+        if (_sapp.desc.high_dpi) {
+            _sapp.framebuffer_width = 2 * _sapp.window_width;
+            _sapp.framebuffer_height = 2 * _sapp.window_height;
+        }
+        else {
+            _sapp.framebuffer_width = _sapp.window_width;
+            _sapp.framebuffer_height = _sapp.window_height;
+        }
+        _sapp.dpi_scale = (float)_sapp.framebuffer_width / (float) _sapp.window_width;
+    }
     const NSUInteger style =
         NSWindowStyleMaskTitled |
         NSWindowStyleMaskClosable |
@@ -685,7 +699,6 @@ _SOKOL_PRIVATE void _sapp_macos_frame(void) {
         defer:NO];
     [_sapp_window_obj setTitle:[NSString stringWithUTF8String:_sapp.window_title]];
     [_sapp_window_obj setAcceptsMouseMovedEvents:YES];
-    [_sapp_window_obj center];
     [_sapp_window_obj setRestorable:YES];
     _sapp_win_dlg_obj = [[_sapp_window_delegate alloc] init];
     [_sapp_window_obj setDelegate:_sapp_win_dlg_obj];
@@ -710,6 +723,12 @@ _SOKOL_PRIVATE void _sapp_macos_frame(void) {
     SOKOL_ASSERT((_sapp.framebuffer_width > 0) && (_sapp.framebuffer_height > 0));
     _sapp.dpi_scale = (float)_sapp.framebuffer_width / (float)_sapp.window_width;
     [[_sapp_view_obj layer] setMagnificationFilter:kCAFilterNearest];
+    if (_sapp.desc.fullscreen) {
+        [_sapp_window_obj toggleFullScreen:self];
+    }
+    else {
+        [_sapp_window_obj center];
+    }
     [_sapp_window_obj makeKeyAndOrderFront:nil];
     _sapp.valid = true;
 }
@@ -813,13 +832,13 @@ _SOKOL_PRIVATE void _sapp_macos_key_event(sapp_event_type type, sapp_keycode key
     _sapp_macos_mouse_event(SAPP_EVENTTYPE_MOUSE_UP, SAPP_MOUSEBUTTON_RIGHT, _sapp_macos_mod(event.modifierFlags));
 }
 - (void)mouseMoved:(NSEvent*)event {
-    _sapp_macos_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE, 0, _sapp_macos_mod(event.modifierFlags));
+    _sapp_macos_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE, SAPP_MOUSEBUTTON_NONE , _sapp_macos_mod(event.modifierFlags));
 }
 - (void)mouseDragged:(NSEvent*)event {
-    _sapp_macos_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE, 0, _sapp_macos_mod(event.modifierFlags));
+    _sapp_macos_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE, SAPP_MOUSEBUTTON_NONE , _sapp_macos_mod(event.modifierFlags));
 }
 - (void)rightMouseDragged:(NSEvent*)event {
-    _sapp_macos_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE, 0, _sapp_macos_mod(event.modifierFlags));
+    _sapp_macos_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE, SAPP_MOUSEBUTTON_NONE, _sapp_macos_mod(event.modifierFlags));
 }
 - (void)scrollWheel:(NSEvent*)event {
     if (_sapp_events_enabled()) {
@@ -1444,6 +1463,7 @@ int main(int argc, char* argv[]) {
     emscripten_set_touchend_callback(_sapp.html5_canvas_name, 0, true, _sapp_emsc_touch_cb);
     emscripten_set_touchcancel_callback(_sapp.html5_canvas_name, 0, true, _sapp_emsc_touch_cb);
     emscripten_set_main_loop(_sapp_emsc_frame, 0, 1);
+    return 0;
 }
 #endif  /* __EMSCRIPTEN__ */
 
@@ -2379,13 +2399,13 @@ _SOKOL_PRIVATE LRESULT CALLBACK _sapp_win32_wndproc(HWND hWnd, UINT uMsg, WPARAM
                 tme.dwFlags = TME_LEAVE;
                 tme.hwndTrack = _sapp_win32_hwnd;
                 TrackMouseEvent(&tme);
-                _sapp_win32_mouse_event(SAPP_EVENTTYPE_MOUSE_ENTER, (sapp_mousebutton) 0);
+                _sapp_win32_mouse_event(SAPP_EVENTTYPE_MOUSE_ENTER, SAPP_MOUSEBUTTON_NONE);
             }
-            _sapp_win32_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE, (sapp_mousebutton) 0);
+            _sapp_win32_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE,  SAPP_MOUSEBUTTON_NONE);
             break;
         case WM_MOUSELEAVE:
             _sapp.win32_mouse_tracked = false;
-            _sapp_win32_mouse_event(SAPP_EVENTTYPE_MOUSE_LEAVE, (sapp_mousebutton) 0);
+            _sapp_win32_mouse_event(SAPP_EVENTTYPE_MOUSE_LEAVE, SAPP_MOUSEBUTTON_NONE);
             break;
         case WM_MOUSEWHEEL:
             _sapp_win32_scroll_event((float)((SHORT)HIWORD(wParam)));
@@ -2894,7 +2914,76 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 }
  
 #undef _SAPP_SAFE_RELEASE
-#endif
+#endif /* WINDOWS */
+
+/*== LINUX ==================================================================*/
+#if defined(linux)
+#define GL_GLEXT_PROTOTYPES
+#include <X11/X.h>
+#include <X11/Xlib.h>
+#include <X11/Xresource.h>
+#include <X11/extensions/Xrandr.h>
+#include <GL/glcorearb.h>
+
+
+static Display* _sapp_x11_display;
+static int _sapp_x11_screen;
+static Window _sapp_x11_root;
+static XrmQuark _sapp_x11_context;
+static float _sapp_x11_dpi;
+
+_SOKOL_PRIVATE void _sapp_x11_query_system_dpi(void) {
+    /* from GLFW:
+
+       NOTE: Default to the display-wide DPI as we don't currently have a policy
+             for which monitor a window is considered to be on
+    _sapp_x11_dpi = DisplayWidth(_sapp_x11_display, _sapp_x11_screen) *
+        25.4f / DisplayWidthMM(_sapp_x11_display, _sapp_x11_screen);
+
+       NOTE: Basing the scale on Xft.dpi where available should provide the most
+             consistent user experience (matches Qt, Gtk, etc), although not
+             always the most accurate one
+    */
+    char* rms = XResourceManagerString(_sapp_x11_display);
+    if (rms) {
+        XrmDatabase db = XrmGetStringDatabase(rms);
+        if (db) {
+            XrmValue value;
+            char* type = NULL;
+            if (XrmGetResource(db, "Xft.dpi", "Xft.Dpi", &type, &value)) {
+                if (type && strcmp(type, "String") == 0) {
+                    _sapp_x11_dpi = atof(value.addr);
+                }
+            }
+            XrmDestroyDatabase(db);
+        }
+    }
+}
+
+
+int main(int argc, char* argv[]) {
+    sapp_desc desc = sokol_main(argc, argv);
+    _sapp_init_state(&desc, argc, argv);
+
+    XInitThreads();
+    XrmInitialize();
+    _sapp_x11_display = XOpenDisplay(NULL);
+    if (!_sapp_x11_display) {
+        _sapp_fail("XOpenDisplay() failed!\n");
+    }
+    _sapp_x11_screen = DefaultScreen(_sapp_x11_display);
+    _sapp_x11_root = DefaultRootWindow(_sapp_x11_display);
+    _sapp_x11_context = XUniqueContext();
+    _sapp_x11_query_system_dpi();
+    _sapp.dpi_scale = _sapp_x11_dpi / 96.0f; 
+
+    // FIXME: query extensions
+
+    XCloseDisplay(_sapp_x11_display);
+    return 0;
+}
+
+#endif /* LINUX */
 
 /*== PUBLIC API FUNCTIONS ====================================================*/
 bool sapp_isvalid(void) {
