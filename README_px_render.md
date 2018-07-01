@@ -2,7 +2,7 @@
 Single Header C++ Command Based backend renderer 
 
 Written in C++11/14, with no dependency, and easy to integrate. See a complete example
-[test1.cpp](https://github.com/pplux/px/blob/master/examples/px_render_test1.cpp).
+[test1.cpp](https://github.com/pplux/px/blob/master/examples/px_render_example_rtt.cpp).
 
 The API itself is render agnostic, and will support multiple backends in the future (OpenGL, Vulkan, DX,...) but right now it only supports OpenGL to start with.
 
