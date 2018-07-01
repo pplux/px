@@ -119,7 +119,7 @@ void Render() {
   Mat4 view_fb;
   gb_mat4_perspective((gbMat4*)&proj, 45.f, 1024/(float)768, 0.05f, 900.0f);
   gb_mat4_perspective((gbMat4*)&proj_fb, 45.f, 1.0f, 0.05f, 900.0f);
-  gb_mat4_look_at((gbMat4*)&view, {0.f,3.f,-3.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
+  gb_mat4_look_at((gbMat4*)&view, {0.f,0.5f,-3.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
   gb_mat4_look_at((gbMat4*)&view_fb, {0.f,10.f,-20.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
 
   struct {
@@ -300,6 +300,8 @@ void Render() {
       .set_clear_color(true)
       .set_clear_depth(true)
       ;
+
+    gb_mat4_rotate((gbMat4*)model.f, {0,1,0}, v*0.25);
     dl.setupPipelineCommand()
       .set_pipeline(quad.material)
       .set_buffer(0,quad.vertex_buff)
