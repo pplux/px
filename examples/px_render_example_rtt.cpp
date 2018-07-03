@@ -1,13 +1,14 @@
 // Emscripten config
 #ifdef __EMSCRIPTEN__
-#include <emscripten.h>
+// Compile with  emcc --std=c++14 -s USE_WEBGL2=1 px_render_example_rtt.cpp -o rtt.html
 #  define SOKOL_GLES3
 #  define PX_RENDER_BACKEND_GLES
-#  include <GLES3/gl3.h>
+#  define GLSL(...) "#version 300 es\n precision highp float;\n" #__VA_ARGS__
 #else
 #  define PX_RENDER_BACKEND_GL //< Default
 #  define SOKOL_WIN32_NO_GL_LOADER
 #  define SOKOL_GLCORE33
+#define GLSL(...) "#version 330\n" #__VA_ARGS__
 // OpenGL + px_render
 #  include "deps/glad.c"
 #endif
@@ -23,7 +24,6 @@
 
 using namespace px_render;
 
-#define GLSL(...) "#version 330\n" #__VA_ARGS__
 
 namespace Cube {
   float vertex_data[] = {
@@ -109,12 +109,12 @@ void init() {
   gb_mat4_look_at((gbMat4*)&State.view, {0.f,0.5f,-3.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
   gb_mat4_look_at((gbMat4*)&State.view_fb, {0.f,10.f,-20.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
 
-  State.cube.vertex_buff = State.ctx.createBuffer({sizeof(Cube::vertex_data), Usage::Static});
-  State.cube.index_buff = State.ctx.createBuffer({sizeof(Cube::index_data), Usage::Static});
-  State.cube.instance_buff = State.ctx.createBuffer({sizeof(State.cube.instance_positions), Usage::Stream});
+  State.cube.vertex_buff = State.ctx.createBuffer({BufferType::Vertex, sizeof(Cube::vertex_data), Usage::Static});
+  State.cube.index_buff = State.ctx.createBuffer({BufferType::Index, sizeof(Cube::index_data), Usage::Static});
+  State.cube.instance_buff = State.ctx.createBuffer({BufferType::Vertex, sizeof(State.cube.instance_positions), Usage::Stream});
 
-  State.quad.vertex_buff = State.ctx.createBuffer({sizeof(Quad::vertex_data), Usage::Static});
-  State.quad.index_buff = State.ctx.createBuffer({sizeof(Quad::index_data), Usage::Static});
+  State.quad.vertex_buff = State.ctx.createBuffer({BufferType::Vertex, sizeof(Quad::vertex_data), Usage::Static});
+  State.quad.index_buff = State.ctx.createBuffer({BufferType::Index, sizeof(Quad::index_data), Usage::Static});
 
   { // Cube Material & Object setup 
     Pipeline::Info pipeline_info;

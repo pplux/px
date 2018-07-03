@@ -126,6 +126,14 @@ namespace px_render {
     };
   };
 
+  struct BufferType {
+    enum Enum {
+      Invalid = 0,
+      Vertex,
+      Index,
+    };
+  };
+
   struct TextureType {
     enum Enum {
       Invalid = 0,
@@ -322,6 +330,7 @@ namespace px_render {
   struct Buffer : public GPUResource {
     Buffer(RenderContext *ctx = nullptr, uint32_t id = 0) : GPUResource{ctx, id, Type::Buffer} {}
     struct Info {
+      BufferType::Enum type = BufferType::Invalid;
       uint32_t size = 0; // size in bytes
       Usage::Enum usage = Usage::Static;
     };
@@ -784,7 +793,8 @@ namespace px_render {
     if (ctx->params.on_error_callback) {
       ctx->params.on_error_callback(buffer);
     } else {
-      fprintf(stderr, "px_render ERROR --> %s", buffer);
+      fprintf(stdout, "px_render ERROR --> %s\n", buffer);
+      fflush(stdout);
       assert(!"FATAL ERROR");
     }
   }
@@ -1468,6 +1478,7 @@ namespace px_render {
     struct Texture {
       GLuint texture = 0;
       GLenum format = 0;
+      GLenum internal_format = 0;
       GLenum type = 0;
       GLenum target = 0;
     };
@@ -1500,8 +1511,9 @@ namespace px_render {
 
   static void CheckGLError(RenderContext::Data *ctx, const char* operation) {
     int32_t error = glGetError();
+    //fprintf(stdout, "GL:%s\n", operation);
     if (error) {
-      OnError(ctx, "OpenGL Error: %d (%s)", error, operation);
+      OnError(ctx, "OpenGL Error: 0x%x (%s)", error, operation);
       return;
     }
   }
@@ -1688,6 +1700,7 @@ namespace px_render {
   static void Execute(RenderContext::Data *ctx, const DisplayList::RenderData &d, const Mem<uint8_t> *payloads) {
     auto b = GetResource(ctx, d.index_buffer.id, &ctx->buffers, &ctx->back_end->buffers);
     auto p = GetResource(ctx,ctx->last_pipeline.id, &ctx->pipelines, &ctx->back_end->pipelines);
+    if (!b.second->buffer) OnError(ctx, "Invalid Index buffer...");
     GLCHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, b.second->buffer));
     GLCHECK(glDrawElementsInstanced(Translate(p.first->info.primitive), d.count, Translate(d.type), (void*)d.offset, d.instances));
   }
@@ -1695,16 +1708,23 @@ namespace px_render {
   static void Execute(RenderContext::Data *ctx, const DisplayList::FillBufferData &d, const Mem<uint8_t> *payloads) {
     auto b = GetResource(ctx, d.buffer.id, &ctx->buffers, &ctx->back_end->buffers);
     GLuint id = b.second->buffer;
+    GLenum target = 0;
+    switch(b.first->info.type) {
+      case BufferType::Vertex: target = GL_ARRAY_BUFFER; break;
+      case BufferType::Index:  target = GL_ELEMENT_ARRAY_BUFFER; break;
+      default: OnError(ctx, "Invalid buffer type"); break;
+    }
     if (!id) {
       GLCHECK(glGenBuffers(1, &id));
-      GLCHECK(glBindBuffer(GL_ARRAY_BUFFER, id));
-      GLCHECK(glBufferData(GL_ARRAY_BUFFER, b.first->info.size, nullptr, Translate(b.first->info.usage)));
+
+      GLCHECK(glBindBuffer(target, id));
+      GLCHECK(glBufferData(target, b.first->info.size, nullptr, Translate(b.first->info.usage)));
       b.second->buffer = id;
     } else {
-    GLCHECK(glBindBuffer(GL_ARRAY_BUFFER, id));
+      GLCHECK(glBindBuffer(target, id));
     }
 
-    if (payloads) GLCHECK(glBufferSubData(GL_ARRAY_BUFFER, d.offset, payloads->count, payloads->data.get()));
+    if (payloads) GLCHECK(glBufferSubData(target, d.offset, payloads->count, payloads->data.get()));
   }
 
   static void TextureInitialization(RenderContext::Data *ctx, GLenum target, const Texture::Info &info) {
@@ -1727,34 +1747,42 @@ namespace px_render {
       switch (t.first->info.format) {
         case TexelsFormat::R_U8:
           back_end->format = GL_RED;
+          back_end->internal_format = GL_R8;
           back_end->type = GL_UNSIGNED_BYTE;
           break;
         case TexelsFormat::RG_U8:
           back_end->format = GL_RG;
+          back_end->internal_format = GL_RG8;
           back_end->type = GL_UNSIGNED_BYTE;
           break;
         case TexelsFormat::RGB_U8:
           back_end->format = GL_RGB;
+          back_end->internal_format = GL_RGB8;
           back_end->type = GL_UNSIGNED_BYTE;
           break;
         case TexelsFormat::RGBA_U8:
           back_end->format = GL_RGBA;
+          back_end->internal_format = GL_RGBA8;
           back_end->type = GL_UNSIGNED_BYTE;
           break;
         case TexelsFormat::Depth_U16:
           back_end->format = GL_DEPTH_COMPONENT;
+          back_end->internal_format = GL_DEPTH_COMPONENT16;
           back_end->type = GL_UNSIGNED_SHORT;
           break;
         case TexelsFormat::DepthStencil_U16:
           back_end->format = GL_DEPTH_STENCIL;
+          back_end->internal_format = GL_DEPTH24_STENCIL8;
           back_end->type = GL_UNSIGNED_SHORT;
           break;
         case TexelsFormat::Depth_U24:
           back_end->format = GL_DEPTH_COMPONENT;
+          back_end->internal_format = GL_DEPTH_COMPONENT24;
           back_end->type = GL_UNSIGNED_INT;
           break;
         case TexelsFormat::DepthStencil_U24:
           back_end->format = GL_DEPTH_STENCIL;
+          back_end->internal_format = GL_DEPTH24_STENCIL8;
           back_end->type = GL_UNSIGNED_INT;
           break;
       }
@@ -1763,7 +1791,7 @@ namespace px_render {
         case TextureType::T1D:
           t.second->target = GL_TEXTURE_1D;
           GLCHECK(glBindTexture(GL_TEXTURE_1D, id));
-          GLCHECK(glTexImage1D(GL_TEXTURE_1D, 0, back_end->format, t.first->info.width, 0, back_end->format, back_end->type, nullptr));
+          GLCHECK(glTexImage1D(GL_TEXTURE_1D, 0, back_end->internal_format, t.first->info.width, 0, back_end->format, back_end->type, nullptr));
           TextureInitialization(ctx, GL_TEXTURE_1D, t.first->info);
         #else
           OnError(ctx, "Texture1D not supported");
@@ -1772,13 +1800,13 @@ namespace px_render {
         case TextureType::T2D:
           t.second->target = GL_TEXTURE_2D;
           GLCHECK(glBindTexture(GL_TEXTURE_2D, id));
-          GLCHECK(glTexImage2D(GL_TEXTURE_2D, 0, back_end->format, t.first->info.width, t.first->info.height, 0, back_end->format, back_end->type, nullptr));
+          GLCHECK(glTexImage2D(GL_TEXTURE_2D, 0, back_end->internal_format, t.first->info.width, t.first->info.height, 0, back_end->format, back_end->type, nullptr));
           TextureInitialization(ctx, GL_TEXTURE_2D, t.first->info);
           break;
         case TextureType::T3D:
           t.second->target = GL_TEXTURE_3D;
           GLCHECK(glBindTexture(GL_TEXTURE_3D, id));
-          GLCHECK(glTexImage3D(GL_TEXTURE_3D, 0, back_end->format, t.first->info.width, t.first->info.height, t.first->info.depth, 0, back_end->format, back_end->type, nullptr));
+          GLCHECK(glTexImage3D(GL_TEXTURE_3D, 0, back_end->internal_format, t.first->info.width, t.first->info.height, t.first->info.depth, 0, back_end->format, back_end->type, nullptr));
           TextureInitialization(ctx, GL_TEXTURE_3D, t.first->info);
           break;
         case TextureType::CubeMap:
@@ -1794,7 +1822,7 @@ namespace px_render {
     auto& back_end = *t.second;
     if (payloads) {
       GLCHECK(glBindTexture(back_end.target, back_end.texture));
-      glPixelStorei(GL_PACK_ALIGNMENT, 1);
+      glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
       switch (t.first->info.type) {
         #ifdef PX_RENDER_BACKEND_GL
         case TextureType::T1D:
