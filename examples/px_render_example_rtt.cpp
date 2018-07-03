@@ -2,7 +2,6 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #  define SOKOL_GLES3
-#  define PX_SCHED_CONFIG_SINGLE_THREAD
 #  define PX_RENDER_BACKEND_GLES
 #  include <GLES3/gl3.h>
 #else
@@ -13,10 +12,6 @@
 #  include "deps/glad.c"
 #endif
 
-// px_sched: Task Scheduler
-#define PX_SCHED_IMPLEMENTATION
-#include "../px_sched.h"
-
 // gb_math & sokol_app (Window Support)
 #define GB_MATH_IMPLEMENTATION
 #define SOKOL_IMPL
@@ -26,50 +21,7 @@
 #define PX_RENDER_IMPLEMENTATION
 #include "../px_render.h"
 
-
-struct {
-  px_render::RenderContext ctx;
-  px_sched::Scheduler sched;
-  px_sched::Sync render_end;
-  std::atomic<bool> running;
-} State;
-
-void Render();
-
-void init() {
-  #if PX_RENDER_BACKEND_GL
-  gladLoadGL();
-  #endif
-  State.ctx.init();
-  State.sched.init();
-  State.running = true;
-  //State.sched.run(Render, &State.render_end);
-}
-
-void frame() {
-  while(true) {
-    px_render::RenderContext::Result::Enum result = State.ctx.executeOnGPU();
-    if (result != px_render::RenderContext::Result::OK) break;
-  }
-}
-
-void cleanup() {
-  State.ctx.finish();
-  State.running = false;
-  State.sched.waitFor(State.render_end);
-  State.sched.stop();
-}
-
-sapp_desc sokol_main(int argc, char **argv) {
-  sapp_desc d = {};
-  d.init_cb = init;
-  d.frame_cb = frame;
-  d.cleanup_cb = cleanup;
-  d.width = 1024;
-  d.height = 768;
-  d.window_title = "PX-Render Test";
-  return d;
-}
+using namespace px_render;
 
 #define GLSL(...) "#version 330\n" #__VA_ARGS__
 
@@ -124,32 +76,45 @@ namespace Quad {
   uint16_t index_data[] = {0, 2, 1,  0, 3, 2};
 }
 
-void Render() {
-  using namespace px_render;
+struct {
+  RenderContext ctx;
   Mat4 proj;
   Mat4 proj_fb;
   Mat4 view;
   Mat4 view_fb;
-  gb_mat4_perspective((gbMat4*)&proj, 45.f, 1024/(float)768, 0.05f, 900.0f);
-  gb_mat4_perspective((gbMat4*)&proj_fb, 45.f, 1.0f, 0.05f, 900.0f);
-  gb_mat4_look_at((gbMat4*)&view, {0.f,0.5f,-3.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
-  gb_mat4_look_at((gbMat4*)&view_fb, {0.f,10.f,-20.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
-
+  Framebuffer fb;
   struct {
     Vec3 instance_positions[5000];
-    
     Pipeline material;
-    Buffer vertex_buff = State.ctx.createBuffer({sizeof(Cube::vertex_data), Usage::Static});
-    Buffer index_buff = State.ctx.createBuffer({sizeof(Cube::index_data), Usage::Static});
-    Buffer instance_buff = State.ctx.createBuffer({sizeof(instance_positions), Usage::Stream});
+    Buffer vertex_buff;
+    Buffer index_buff;
+    Buffer instance_buff;
     Texture texture;
   } cube;
-
   struct {
     Pipeline material;
-    Buffer vertex_buff = State.ctx.createBuffer({sizeof(Quad::vertex_data), Usage::Static});
-    Buffer index_buff = State.ctx.createBuffer({sizeof(Quad::index_data), Usage::Static});
+    Buffer vertex_buff;
+    Buffer index_buff;
   } quad;
+} State = {};
+
+
+void init() {
+  #ifdef PX_RENDER_BACKEND_GL
+  gladLoadGL();
+  #endif
+  State.ctx.init();
+  gb_mat4_perspective((gbMat4*)&State.proj, 45.f, 1024/(float)768, 0.05f, 900.0f);
+  gb_mat4_perspective((gbMat4*)&State.proj_fb, 45.f, 1.0f, 0.05f, 900.0f);
+  gb_mat4_look_at((gbMat4*)&State.view, {0.f,0.5f,-3.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
+  gb_mat4_look_at((gbMat4*)&State.view_fb, {0.f,10.f,-20.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
+
+  State.cube.vertex_buff = State.ctx.createBuffer({sizeof(Cube::vertex_data), Usage::Static});
+  State.cube.index_buff = State.ctx.createBuffer({sizeof(Cube::index_data), Usage::Static});
+  State.cube.instance_buff = State.ctx.createBuffer({sizeof(State.cube.instance_positions), Usage::Stream});
+
+  State.quad.vertex_buff = State.ctx.createBuffer({sizeof(Quad::vertex_data), Usage::Static});
+  State.quad.index_buff = State.ctx.createBuffer({sizeof(Quad::index_data), Usage::Static});
 
   { // Cube Material & Object setup 
     Pipeline::Info pipeline_info;
@@ -181,7 +146,7 @@ void Render() {
     pipeline_info.attribs[2] = {"uv", VertexFormat::Float2};
     pipeline_info.attribs[3] = {"instance_position", VertexFormat::Float3, 1, VertexStep::PerInstance};
     pipeline_info.textures[0] = TextureType::T2D;
-    cube.material = State.ctx.createPipeline(pipeline_info);
+    State.cube.material = State.ctx.createPipeline(pipeline_info);
 
 
     Texture::Info tex_info;
@@ -190,15 +155,15 @@ void Render() {
     tex_info.height = 4;
     tex_info.magnification_filter = SamplerFiltering::Nearest;
     tex_info.minification_filter = SamplerFiltering::Nearest;
-    cube.texture = State.ctx.createTexture(tex_info);
+    State.cube.texture = State.ctx.createTexture(tex_info);
     {
       DisplayList dl;
       dl.fillBufferCommand()
-        .set_buffer(cube.vertex_buff)
+        .set_buffer(State.cube.vertex_buff)
         .set_data(Cube::vertex_data)
         .set_size(sizeof(Cube::vertex_data));
       dl.fillBufferCommand()
-        .set_buffer(cube.index_buff)
+        .set_buffer(State.cube.index_buff)
         .set_data(Cube::index_data)
         .set_size(sizeof(Cube::index_data));
 
@@ -209,10 +174,9 @@ void Render() {
         0, 255, 0, 255,
       };
       dl.fillTextureCommand()
-        .set_texture(cube.texture)
+        .set_texture(State.cube.texture)
         .set_data(tex_data)
         ;
-
       State.ctx.submitDisplayList(std::move(dl));
     }
   } // Cube Setup
@@ -243,14 +207,14 @@ void Render() {
     pipeline_info.attribs[1] = {"uv", VertexFormat::Float2};
     pipeline_info.textures[0] = TextureType::T2D;
     pipeline_info.cull = Cull::Disabled;
-    quad.material = State.ctx.createPipeline(pipeline_info);
+    State.quad.material = State.ctx.createPipeline(pipeline_info);
     DisplayList dl;
     dl.fillBufferCommand()
-      .set_buffer(quad.vertex_buff)
+      .set_buffer(State.quad.vertex_buff)
       .set_data(Quad::vertex_data)
       .set_size(sizeof(Quad::vertex_data));
     dl.fillBufferCommand()
-      .set_buffer(quad.index_buff)
+      .set_buffer(State.quad.index_buff)
       .set_data(Quad::index_data)
       .set_size(sizeof(Quad::index_data));
     State.ctx.submitDisplayList(std::move(dl));
@@ -262,82 +226,98 @@ void Render() {
   fb_tex_color.format = TexelsFormat::RGBA_U8;
   fb_tex_depth.format = TexelsFormat::Depth_U16;
 
-  Framebuffer fb = State.ctx.createFramebuffer({fb_tex_color, fb_tex_depth});
-
-  float v = 0;
-  while(State.running) {
-    for (int i = 0; i < sizeof(cube.instance_positions) / sizeof(Vec3); ++i) {
-      cube.instance_positions[i] = {(float)(i%1000)*3.0f,5.0f*(float)(gb_sin(i*GB_MATH_PI/10+v)), (i/1000)*3.0f};
-    }
-    Mat4 model;
-    gb_mat4_rotate((gbMat4*)model.f, {0,1,0}, v);
-    v+= 0.01;
-    DisplayList dl;
-    dl.setupViewCommand()
-      .set_viewport({0,0,640,640})
-      .set_projection_matrix(proj_fb)
-      .set_view_matrix(view_fb)
-      .set_framebuffer(fb)
-      ;
-    dl.clearCommand()
-      .set_color({0.2f,0.2f,0.2f,1.0f})
-      .set_clear_color(true)
-      .set_clear_depth(true)
-      ;
-    dl.fillBufferCommand()
-      .set_buffer(cube.instance_buff)
-      .set_data(cube.instance_positions)
-      .set_size(sizeof(cube.instance_positions))
-      ;
-    dl.setupPipelineCommand()
-      .set_pipeline(cube.material)
-      .set_buffer(0,cube.vertex_buff)
-      .set_buffer(1,cube.instance_buff)
-      .set_model_matrix(model)
-      .set_texture(0, cube.texture)
-      ;
-    dl.renderCommand()
-      .set_index_buffer(cube.index_buff)
-      .set_count(sizeof(Cube::index_data)/sizeof(uint16_t))
-      .set_type(IndexFormat::UInt16)
-      .set_instances(sizeof(cube.instance_positions)/sizeof(cube.instance_positions[0]))
-      ;
-    // now render to the main FrameBuffer...
-    dl.setupViewCommand()
-      .set_viewport({0,0,1024,768})
-      .set_projection_matrix(proj)
-      .set_view_matrix(view)
-      ;
-    dl.clearCommand()
-      .set_color({0.5f,0.7f,0.8f,1.0f})
-      .set_clear_color(true)
-      .set_clear_depth(true)
-      ;
-
-    gb_mat4_rotate((gbMat4*)model.f, {0,1,0}, v*0.25);
-    dl.setupPipelineCommand()
-      .set_pipeline(quad.material)
-      .set_buffer(0,quad.vertex_buff)
-      .set_texture(0, fb.color_texture())
-      .set_model_matrix(model)
-      ;
-    dl.renderCommand()
-      .set_index_buffer(quad.index_buff)
-      .set_count(sizeof(Quad::index_data)/sizeof(uint16_t))
-      .set_type(IndexFormat::UInt16)
-      ;
-
-    State.ctx.submitDisplayListAndSwap(std::move(dl));
-   }
-   // Free resources 
-   // This is just an example, all resources are freed when the context is 
-   // closed anyway.
-   DisplayList dl;
-   dl.destroy(cube.texture)
-     .destroy(cube.index_buff)
-     .destroy(cube.material)
-     .destroy(cube.vertex_buff)
-     .destroy(cube.instance_buff)
-     ;
-   State.ctx.submitDisplayList(std::move(dl));
+  State.fb = State.ctx.createFramebuffer({fb_tex_color, fb_tex_depth});
 }
+
+void frame() {
+  // Render could be done on other thread, but for simplicity and
+  // to make the example work along with EMSCRIPTEN let's pretend
+  static float v = 0;
+  for (int i = 0; i < sizeof(State.cube.instance_positions) / sizeof(Vec3); ++i) {
+    State.cube.instance_positions[i] = {
+      (float)(i%1000)*3.0f,
+      5.0f*(float)(gb_sin(i*GB_MATH_PI/10+v)),
+      (i/1000)*3.0f};
+  }
+  Mat4 model;
+  gb_mat4_rotate((gbMat4*)model.f, {0,1,0}, v);
+  v+= 0.01;
+  DisplayList dl;
+  dl.setupViewCommand()
+    .set_viewport({0,0,640,640})
+    .set_projection_matrix(State.proj_fb)
+    .set_view_matrix(State.view_fb)
+    .set_framebuffer(State.fb)
+    ;
+  dl.clearCommand()
+    .set_color({0.2f,0.2f,0.2f,1.0f})
+    .set_clear_color(true)
+    .set_clear_depth(true)
+    ;
+  dl.fillBufferCommand()
+    .set_buffer(State.cube.instance_buff)
+    .set_data(State.cube.instance_positions)
+    .set_size(sizeof(State.cube.instance_positions))
+    ;
+  dl.setupPipelineCommand()
+    .set_pipeline(State.cube.material)
+    .set_buffer(0,State.cube.vertex_buff)
+    .set_buffer(1,State.cube.instance_buff)
+    .set_model_matrix(model)
+    .set_texture(0, State.cube.texture)
+    ;
+  dl.renderCommand()
+    .set_index_buffer(State.cube.index_buff)
+    .set_count(sizeof(Cube::index_data)/sizeof(uint16_t))
+    .set_type(IndexFormat::UInt16)
+    .set_instances(sizeof(State.cube.instance_positions)/sizeof(State.cube.instance_positions[0]))
+    ;
+  // now render to the main FrameBuffer...
+  dl.setupViewCommand()
+    .set_viewport({0,0,1024,768})
+    .set_projection_matrix(State.proj)
+    .set_view_matrix(State.view)
+    ;
+  dl.clearCommand()
+    .set_color({0.5f,0.7f,0.8f,1.0f})
+    .set_clear_color(true)
+    .set_clear_depth(true)
+    ;
+
+  gb_mat4_rotate((gbMat4*)model.f, {0,1,0}, v*0.25);
+  dl.setupPipelineCommand()
+    .set_pipeline(State.quad.material)
+    .set_buffer(0,State.quad.vertex_buff)
+    .set_texture(0, State.fb.color_texture())
+    .set_model_matrix(model)
+    ;
+  dl.renderCommand()
+    .set_index_buffer(State.quad.index_buff)
+    .set_count(sizeof(Quad::index_data)/sizeof(uint16_t))
+    .set_type(IndexFormat::UInt16)
+    ;
+
+  State.ctx.submitDisplayListAndSwap(std::move(dl));
+
+  // GPU Render...
+  while(true) {
+    RenderContext::Result::Enum result = State.ctx.executeOnGPU();
+    if (result != RenderContext::Result::OK) break;
+  }
+}
+
+void cleanup() {
+  State.ctx.finish();
+}
+
+sapp_desc sokol_main(int argc, char **argv) {
+  sapp_desc d = {};
+  d.init_cb = init;
+  d.frame_cb = frame;
+  d.cleanup_cb = cleanup;
+  d.width = 1024;
+  d.height = 768;
+  d.window_title = "PX-Render Test";
+  return d;
+}
+
