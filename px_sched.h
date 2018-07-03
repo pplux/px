@@ -810,7 +810,7 @@ namespace px_sched {
 #if PX_SCHED_IMP_SINGLE_THREAD
 // Implementation with no threads (single threaded) every added Job it is
 // executed inmediately
-namespace px {
+namespace px_sched {
   Scheduler::Scheduler() {}
   Scheduler::~Scheduler() {}
   void Scheduler::init(const SchedulerParams &) {}

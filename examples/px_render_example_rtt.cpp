@@ -1,17 +1,28 @@
+// Emscripten config
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#  define SOKOL_GLES3
+#  define PX_SCHED_CONFIG_SINGLE_THREAD
+#  define PX_RENDER_BACKEND_GLES
+#  include <GLES3/gl3.h>
+#else
+#  define PX_RENDER_BACKEND_GL //< Default
+#  define SOKOL_WIN32_NO_GL_LOADER
+#  define SOKOL_GLCORE33
+// OpenGL + px_render
+#  include "deps/glad.c"
+#endif
+
 // px_sched: Task Scheduler
 #define PX_SCHED_IMPLEMENTATION
 #include "../px_sched.h"
 
 // gb_math & sokol_app (Window Support)
 #define GB_MATH_IMPLEMENTATION
-#define SOKOL_WIN32_NO_GL_LOADER
 #define SOKOL_IMPL
-#define SOKOL_GLCORE33
 #include "deps/gb_math.h"
 #include "deps/sokol_app.h"
 
-// OpenGL + px_render
-#include "deps/glad.c"
 #define PX_RENDER_IMPLEMENTATION
 #include "../px_render.h"
 
@@ -26,11 +37,13 @@ struct {
 void Render();
 
 void init() {
+  #if PX_RENDER_BACKEND_GL
   gladLoadGL();
+  #endif
   State.ctx.init();
   State.sched.init();
   State.running = true;
-  State.sched.run(Render, &State.render_end);
+  //State.sched.run(Render, &State.render_end);
 }
 
 void frame() {

@@ -2,7 +2,7 @@
 /*
     sokol_app.h -- cross-platform application wrapper
 
-    Portions of the OSX and Windows GL initialization and event code have been
+    Portions of the Windows and Linux GL initialization and event code have been
     taken from GLFW (http://www.glfw.org/)
 
     Do this:
@@ -81,8 +81,8 @@ extern "C" {
 #endif
 
 enum {
-    SAPP_MAX_TOUCH_POINTS = 8,
-    SAPP_MAX_MOUSE_BUTTONS = 3,
+    SAPP_MAX_TOUCHPOINTS = 8,
+    SAPP_MAX_MOUSEBUTTONS = 3,
     SAPP_MAX_KEYCODES = 512,
 };
 
@@ -238,10 +238,10 @@ typedef struct {
 } sapp_touchpoint;
 
 typedef enum {
-    SAPP_MOUSEBUTTON_NONE = 0,
-    SAPP_MOUSEBUTTON_LEFT = 1,
-    SAPP_MOUSEBUTTON_RIGHT = 2,
-    SAPP_MOUSEBUTTON_MIDDLE = 3,
+    SAPP_MOUSEBUTTON_INVALID = -1,
+    SAPP_MOUSEBUTTON_LEFT = 0,
+    SAPP_MOUSEBUTTON_RIGHT = 1,
+    SAPP_MOUSEBUTTON_MIDDLE = 2,
 } sapp_mousebutton;
 
 enum {
@@ -263,7 +263,7 @@ typedef struct {
     float scroll_x;
     float scroll_y;
     int num_touches;
-    sapp_touchpoint touches[SAPP_MAX_TOUCH_POINTS];
+    sapp_touchpoint touches[SAPP_MAX_TOUCHPOINTS];
 } sapp_event;
 
 typedef struct {
@@ -477,6 +477,7 @@ _SOKOL_PRIVATE void _sapp_init_event(sapp_event_type type) {
     memset(&_sapp.event, 0, sizeof(_sapp.event));
     _sapp.event.type = type;
     _sapp.event.frame_count = _sapp.frame_count;
+    _sapp.event.mouse_button = SAPP_MOUSEBUTTON_INVALID;
 }
 
 _SOKOL_PRIVATE bool _sapp_events_enabled(void) {
@@ -790,7 +791,7 @@ _SOKOL_PRIVATE uint32_t _sapp_macos_mod(NSEventModifierFlags f) {
 }
 
 _SOKOL_PRIVATE void _sapp_macos_mouse_event(sapp_event_type type, sapp_mousebutton btn, uint32_t mod) {
-    if (_sapp_events_enabled() && (btn < SAPP_MAX_MOUSE_BUTTONS)) {
+    if (_sapp_events_enabled()) {
         _sapp_init_event(type);
         _sapp.event.mouse_button = btn;
         _sapp.event.modifiers = mod;
@@ -832,13 +833,13 @@ _SOKOL_PRIVATE void _sapp_macos_key_event(sapp_event_type type, sapp_keycode key
     _sapp_macos_mouse_event(SAPP_EVENTTYPE_MOUSE_UP, SAPP_MOUSEBUTTON_RIGHT, _sapp_macos_mod(event.modifierFlags));
 }
 - (void)mouseMoved:(NSEvent*)event {
-    _sapp_macos_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE, SAPP_MOUSEBUTTON_NONE , _sapp_macos_mod(event.modifierFlags));
+    _sapp_macos_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE, SAPP_MOUSEBUTTON_INVALID , _sapp_macos_mod(event.modifierFlags));
 }
 - (void)mouseDragged:(NSEvent*)event {
-    _sapp_macos_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE, SAPP_MOUSEBUTTON_NONE , _sapp_macos_mod(event.modifierFlags));
+    _sapp_macos_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE, SAPP_MOUSEBUTTON_INVALID , _sapp_macos_mod(event.modifierFlags));
 }
 - (void)rightMouseDragged:(NSEvent*)event {
-    _sapp_macos_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE, SAPP_MOUSEBUTTON_NONE, _sapp_macos_mod(event.modifierFlags));
+    _sapp_macos_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE, SAPP_MOUSEBUTTON_INVALID, _sapp_macos_mod(event.modifierFlags));
 }
 - (void)scrollWheel:(NSEvent*)event {
     if (_sapp_events_enabled()) {
@@ -1056,7 +1057,7 @@ _SOKOL_PRIVATE void _sapp_ios_touch_event(sapp_event_type type, NSSet<UITouch *>
         NSEnumerator* enumerator = [[event allTouches] objectEnumerator];
         UITouch* ios_touch;
         while ((ios_touch = [enumerator nextObject])) {
-            if ((_sapp.event.num_touches + 1) < SAPP_MAX_TOUCH_POINTS) {
+            if ((_sapp.event.num_touches + 1) < SAPP_MAX_TOUCHPOINTS) {
                 CGPoint ios_pos = [ios_touch locationInView:_sapp_view_obj];
                 sapp_touchpoint* cur_point = &_sapp.event.touches[_sapp.event.num_touches++];
                 cur_point->identifier = (uintptr_t) ios_touch;
@@ -1130,14 +1131,17 @@ _SOKOL_PRIVATE void _sapp_emsc_frame(void) {
 _SOKOL_PRIVATE EM_BOOL _sapp_emsc_mouse_cb(int emsc_type, const EmscriptenMouseEvent* emsc_event, void* user_data) {
     _sapp.mouse_x = (emsc_event->canvasX * _sapp.dpi_scale);
     _sapp.mouse_y = (emsc_event->canvasY * _sapp.dpi_scale);
-    if (_sapp_events_enabled() && (emsc_event->button < SAPP_MAX_MOUSE_BUTTONS)) {
+    if (_sapp_events_enabled() && (emsc_event->button >= 0) && (emsc_event->button < SAPP_MAX_MOUSEBUTTONS)) {
         sapp_event_type type;
+        bool is_button_event = false;
         switch (emsc_type) {
             case EMSCRIPTEN_EVENT_MOUSEDOWN:
                 type = SAPP_EVENTTYPE_MOUSE_DOWN;
+                is_button_event = true;
                 break;
             case EMSCRIPTEN_EVENT_MOUSEUP:
                 type = SAPP_EVENTTYPE_MOUSE_UP;
+                is_button_event = true;
                 break;
             case EMSCRIPTEN_EVENT_MOUSEMOVE:
                 type = SAPP_EVENTTYPE_MOUSE_MOVE;
@@ -1166,11 +1170,16 @@ _SOKOL_PRIVATE EM_BOOL _sapp_emsc_mouse_cb(int emsc_type, const EmscriptenMouseE
             if (emsc_event->metaKey) {
                 _sapp.event.modifiers |= SAPP_MODIFIER_SUPER;
             }
-            switch (emsc_event->button) {
-                case 0: _sapp.event.mouse_button = SAPP_MOUSEBUTTON_LEFT; break;
-                case 1: _sapp.event.mouse_button = SAPP_MOUSEBUTTON_MIDDLE; break;
-                case 2: _sapp.event.mouse_button = SAPP_MOUSEBUTTON_RIGHT; break;
-                default: _sapp.event.mouse_button = emsc_event->button; break;
+            if (is_button_event) {
+                switch (emsc_event->button) {
+                    case 0: _sapp.event.mouse_button = SAPP_MOUSEBUTTON_LEFT; break;
+                    case 1: _sapp.event.mouse_button = SAPP_MOUSEBUTTON_MIDDLE; break;
+                    case 2: _sapp.event.mouse_button = SAPP_MOUSEBUTTON_RIGHT; break;
+                    default: _sapp.event.mouse_button = (sapp_mousebutton)emsc_event->button; break;
+                }
+            }
+            else {
+                _sapp.event.mouse_button = SAPP_MOUSEBUTTON_INVALID;
             }
             _sapp.event.mouse_x = _sapp.mouse_x;
             _sapp.event.mouse_y = _sapp.mouse_y;
@@ -1285,8 +1294,8 @@ _SOKOL_PRIVATE EM_BOOL _sapp_emsc_touch_cb(int emsc_type, const EmscriptenTouchE
                 _sapp.event.modifiers |= SAPP_MODIFIER_SUPER;
             }
             _sapp.event.num_touches = emsc_event->numTouches;
-            if (_sapp.event.num_touches > SAPP_MAX_TOUCH_POINTS) {
-                _sapp.event.num_touches = SAPP_MAX_TOUCH_POINTS;
+            if (_sapp.event.num_touches > SAPP_MAX_TOUCHPOINTS) {
+                _sapp.event.num_touches = SAPP_MAX_TOUCHPOINTS;
             }
             for (int i = 0; i < _sapp.event.num_touches; i++) {
                 const EmscriptenTouchPoint* src = &emsc_event->touches[i];
@@ -1555,7 +1564,6 @@ static ID3D11DepthStencilView* _sapp_d3d11_dsv;
 #define WGL_CONTEXT_MAJOR_VERSION_ARB 0x2091
 #define WGL_CONTEXT_MINOR_VERSION_ARB 0x2092
 #define WGL_CONTEXT_FLAGS_ARB 0x2094
-#define WGL_CONTEXT_ES2_PROFILE_BIT_EXT 0x00000004
 #define WGL_CONTEXT_ROBUST_ACCESS_BIT_ARB 0x00000004
 #define WGL_LOSE_CONTEXT_ON_RESET_ARB 0x8252
 #define WGL_CONTEXT_RESET_NOTIFICATION_STRATEGY_ARB 0x8256
@@ -1563,7 +1571,6 @@ static ID3D11DepthStencilView* _sapp_d3d11_dsv;
 #define WGL_CONTEXT_RELEASE_BEHAVIOR_ARB 0x2097
 #define WGL_CONTEXT_RELEASE_BEHAVIOR_NONE_ARB 0
 #define WGL_CONTEXT_RELEASE_BEHAVIOR_FLUSH_ARB 0x2098
-#define WGL_CONTEXT_OPENGL_NO_ERROR_ARB 0x31b3
 #define WGL_COLORSPACE_EXT 0x309d
 #define WGL_COLORSPACE_SRGB_EXT 0x3089
 #define ERROR_INVALID_VERSION_ARB 0x2095
@@ -2399,13 +2406,13 @@ _SOKOL_PRIVATE LRESULT CALLBACK _sapp_win32_wndproc(HWND hWnd, UINT uMsg, WPARAM
                 tme.dwFlags = TME_LEAVE;
                 tme.hwndTrack = _sapp_win32_hwnd;
                 TrackMouseEvent(&tme);
-                _sapp_win32_mouse_event(SAPP_EVENTTYPE_MOUSE_ENTER, SAPP_MOUSEBUTTON_NONE);
+                _sapp_win32_mouse_event(SAPP_EVENTTYPE_MOUSE_ENTER, SAPP_MOUSEBUTTON_INVALID);
             }
-            _sapp_win32_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE,  SAPP_MOUSEBUTTON_NONE);
+            _sapp_win32_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE,  SAPP_MOUSEBUTTON_INVALID);
             break;
         case WM_MOUSELEAVE:
             _sapp.win32_mouse_tracked = false;
-            _sapp_win32_mouse_event(SAPP_EVENTTYPE_MOUSE_LEAVE, SAPP_MOUSEBUTTON_NONE);
+            _sapp_win32_mouse_event(SAPP_EVENTTYPE_MOUSE_LEAVE, SAPP_MOUSEBUTTON_INVALID);
             break;
         case WM_MOUSEWHEEL:
             _sapp_win32_scroll_event((float)((SHORT)HIWORD(wParam)));
@@ -2924,13 +2931,110 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 #include <X11/Xresource.h>
 #include <X11/extensions/Xrandr.h>
 #include <GL/glcorearb.h>
+#include <dlfcn.h> /* dlopen, dlsym, dlclose */
 
+#define GLX_VENDOR 1
+#define GLX_RGBA_BIT 0x00000001
+#define GLX_WINDOW_BIT 0x00000001
+#define GLX_DRAWABLE_TYPE 0x8010
+#define GLX_RENDER_TYPE	0x8011
+#define GLX_RGBA_TYPE 0x8014
+#define GLX_DOUBLEBUFFER 5
+#define GLX_STEREO 6
+#define GLX_AUX_BUFFERS	7
+#define GLX_RED_SIZE 8
+#define GLX_GREEN_SIZE 9
+#define GLX_BLUE_SIZE 10
+#define GLX_ALPHA_SIZE 11
+#define GLX_DEPTH_SIZE 12
+#define GLX_STENCIL_SIZE 13
+#define GLX_ACCUM_RED_SIZE 14
+#define GLX_ACCUM_GREEN_SIZE 15
+#define GLX_ACCUM_BLUE_SIZE	16
+#define GLX_ACCUM_ALPHA_SIZE 17
+#define GLX_SAMPLES 0x186a1
+#define GLX_VISUAL_ID 0x800b
+
+#define GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB 0x20b2
+#define GLX_CONTEXT_DEBUG_BIT_ARB 0x00000001
+#define GLX_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB 0x00000002
+#define GLX_CONTEXT_CORE_PROFILE_BIT_ARB 0x00000001
+#define GLX_CONTEXT_PROFILE_MASK_ARB 0x9126
+#define GLX_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB 0x00000002
+#define GLX_CONTEXT_MAJOR_VERSION_ARB 0x2091
+#define GLX_CONTEXT_MINOR_VERSION_ARB 0x2092
+#define GLX_CONTEXT_FLAGS_ARB 0x2094
+#define GLX_CONTEXT_ROBUST_ACCESS_BIT_ARB 0x00000004
+#define GLX_LOSE_CONTEXT_ON_RESET_ARB 0x8252
+#define GLX_CONTEXT_RESET_NOTIFICATION_STRATEGY_ARB 0x8256
+#define GLX_NO_RESET_NOTIFICATION_ARB 0x8261
+#define GLX_CONTEXT_RELEASE_BEHAVIOR_ARB 0x2097
+#define GLX_CONTEXT_RELEASE_BEHAVIOR_NONE_ARB 0
+#define GLX_CONTEXT_RELEASE_BEHAVIOR_FLUSH_ARB 0x2098
+
+typedef XID GLXWindow;
+typedef XID GLXDrawable;
+typedef struct __GLXFBConfig* GLXFBConfig;
+typedef struct __GLXcontext* GLXContext;
+typedef void (*__GLXextproc)(void);
+
+typedef int (*PFNGLXGETFBCONFIGATTRIBPROC)(Display*,GLXFBConfig,int,int*);
+typedef const char* (*PFNGLXGETCLIENTSTRINGPROC)(Display*,int);
+typedef Bool (*PFNGLXQUERYEXTENSIONPROC)(Display*,int*,int*);
+typedef Bool (*PFNGLXQUERYVERSIONPROC)(Display*,int*,int*);
+typedef void (*PFNGLXDESTROYCONTEXTPROC)(Display*,GLXContext);
+typedef Bool (*PFNGLXMAKECURRENTPROC)(Display*,GLXDrawable,GLXContext);
+typedef void (*PFNGLXSWAPBUFFERSPROC)(Display*,GLXDrawable);
+typedef const char* (*PFNGLXQUERYEXTENSIONSSTRINGPROC)(Display*,int);
+typedef GLXFBConfig* (*PFNGLXGETFBCONFIGSPROC)(Display*,int,int*);
+typedef GLXContext (*PFNGLXCREATENEWCONTEXTPROC)(Display*,GLXFBConfig,int,GLXContext,Bool);
+typedef __GLXextproc (* PFNGLXGETPROCADDRESSPROC)(const GLubyte *procName);
+typedef void (*PFNGLXSWAPINTERVALEXTPROC)(Display*,GLXDrawable,int);
+typedef XVisualInfo* (*PFNGLXGETVISUALFROMFBCONFIGPROC)(Display*,GLXFBConfig);
+typedef GLXWindow (*PFNGLXCREATEWINDOWPROC)(Display*,GLXFBConfig,Window,const int*);
+typedef void (*PFNGLXDESTROYWINDOWPROC)(Display*,GLXWindow);
+
+typedef int (*PFNGLXSWAPINTERVALMESAPROC)(int);
+typedef GLXContext (*PFNGLXCREATECONTEXTATTRIBSARBPROC)(Display*,GLXFBConfig,GLXContext,Bool,const int*);
 
 static Display* _sapp_x11_display;
 static int _sapp_x11_screen;
 static Window _sapp_x11_root;
 static XrmQuark _sapp_x11_context;
 static float _sapp_x11_dpi;
+static void* _sapp_glx_libgl;
+static int _sapp_glx_major;
+static int _sapp_glx_minor;
+static int _sapp_glx_eventbase;
+static int _sapp_glx_errorbase;
+// GLX 1.3 functions
+static PFNGLXGETFBCONFIGSPROC              _sapp_glx_GetFBConfigs;
+static PFNGLXGETFBCONFIGATTRIBPROC         _sapp_glx_GetFBConfigAttrib;
+static PFNGLXGETCLIENTSTRINGPROC           _sapp_glx_GetClientString;
+static PFNGLXQUERYEXTENSIONPROC            _sapp_glx_QueryExtension;
+static PFNGLXQUERYVERSIONPROC              _sapp_glx_QueryVersion;
+static PFNGLXDESTROYCONTEXTPROC            _sapp_glx_DestroyContext;
+static PFNGLXMAKECURRENTPROC               _sapp_glx_MakeCurrent;
+static PFNGLXSWAPBUFFERSPROC               _sapp_glx_SwapBuffers;
+static PFNGLXQUERYEXTENSIONSSTRINGPROC     _sapp_glx_QueryExtensionsString;
+static PFNGLXCREATENEWCONTEXTPROC          _sapp_glx_CreateNewContext;
+static PFNGLXGETVISUALFROMFBCONFIGPROC     _sapp_glx_GetVisualFromFBConfig;
+static PFNGLXCREATEWINDOWPROC              _sapp_glx_CreateWindow;
+static PFNGLXDESTROYWINDOWPROC             _sapp_glx_DestroyWindow;
+
+// GLX 1.4 and extension functions
+static PFNGLXGETPROCADDRESSPROC            _sapp_glx_GetProcAddress;
+static PFNGLXGETPROCADDRESSPROC            _sapp_glx_GetProcAddressARB;
+static PFNGLXSWAPINTERVALEXTPROC           _sapp_glx_SwapIntervalEXT;
+static PFNGLXSWAPINTERVALMESAPROC          _sapp_glx_SwapIntervalMESA;
+static PFNGLXCREATECONTEXTATTRIBSARBPROC   _sapp_glx_CreateContextAttribsARB;
+static bool        _sapp_glx_EXT_swap_control;
+static bool        _sapp_glx_MESA_swap_control;
+static bool        _sapp_glx_ARB_multisample;
+static bool        _sapp_glx_ARB_framebuffer_sRGB;
+static bool        _sapp_glx_EXT_framebuffer_sRGB;
+static bool        _sapp_glx_ARB_create_context;
+static bool        _sapp_glx_ARB_create_context_profile;
 
 _SOKOL_PRIVATE void _sapp_x11_query_system_dpi(void) {
     /* from GLFW:
@@ -2960,6 +3064,123 @@ _SOKOL_PRIVATE void _sapp_x11_query_system_dpi(void) {
     }
 }
 
+_SOKOL_PRIVATE bool _sapp_glx_has_ext(const char* ext, const char* extensions) {
+    SOKOL_ASSERT(ext);
+    const char* start = extensions;
+    while (true) {
+        const char* where = strstr(start, ext);
+        if (!where) {
+            return false;
+        }
+        const char* terminator = where + strlen(ext);
+        if ((where == start) || (*(where - 1) == ' ')) {
+            if (*terminator == ' ' || *terminator == '\0') {
+                break;
+            }
+        }
+        start = terminator;
+    }
+    return true;
+}
+
+_SOKOL_PRIVATE bool _sapp_glx_extsupported(const char* ext, const char* extensions) {
+    if (extensions) {
+        return _sapp_glx_has_ext(ext, extensions);
+    }
+    else {
+        return false;
+    }
+}
+
+_SOKOL_PRIVATE void* _sapp_glx_getprocaddr(const char* procname)
+{
+    if (_sapp_glx_GetProcAddress) {
+        return _sapp_glx_GetProcAddress((const GLubyte*) procname);
+    }
+    else if (_sapp_glx_GetProcAddressARB) {
+        return _sapp_glx_GetProcAddressARB((const GLubyte*) procname);
+    }
+    else {
+        return dlsym(_sapp_glx_libgl, procname);
+    }
+}
+
+_SOKOL_PRIVATE void _sapp_glx_init() {
+    const char* sonames[] = { "libGL.so.1", "libGL.so", 0 };
+    for (int i = 0; sonames[i]; i++) {
+        _sapp_glx_libgl = dlopen(sonames[i], RTLD_LAZY|RTLD_GLOBAL);
+        if (_sapp_glx_libgl) {
+            break;
+        }
+    }
+    if (!_sapp_glx_libgl) {
+        _sapp_fail("GLX: failed to load libGL");
+    }
+    _sapp_glx_GetFBConfigs          = dlsym(_sapp_glx_libgl, "glXGetFBConfigs");
+    _sapp_glx_GetFBConfigAttrib     = dlsym(_sapp_glx_libgl, "glXGetFBConfigAttrib");
+    _sapp_glx_GetClientString       = dlsym(_sapp_glx_libgl, "glXGetClientString");
+    _sapp_glx_QueryExtension        = dlsym(_sapp_glx_libgl, "glXQueryExtension");
+    _sapp_glx_QueryVersion          = dlsym(_sapp_glx_libgl, "glXQueryVersion");
+    _sapp_glx_DestroyContext        = dlsym(_sapp_glx_libgl, "glXDestroyContext");
+    _sapp_glx_MakeCurrent           = dlsym(_sapp_glx_libgl, "glXMakeCurrent");
+    _sapp_glx_SwapBuffers           = dlsym(_sapp_glx_libgl, "glXSwapBuffers");
+    _sapp_glx_QueryExtensionsString = dlsym(_sapp_glx_libgl, "glXQueryExtensionsString");
+    _sapp_glx_CreateNewContext      = dlsym(_sapp_glx_libgl, "glXCreateNewContext");
+    _sapp_glx_CreateWindow          = dlsym(_sapp_glx_libgl, "glXCreateWindow");
+    _sapp_glx_DestroyWindow         = dlsym(_sapp_glx_libgl, "glXDestroyWindow");
+    _sapp_glx_GetProcAddress        = dlsym(_sapp_glx_libgl, "glXGetProcAddress");
+    _sapp_glx_GetProcAddressARB     = dlsym(_sapp_glx_libgl, "glXGetProcAddressARB");
+    _sapp_glx_GetVisualFromFBConfig = dlsym(_sapp_glx_libgl, "glXGetVisualFromFBConfig");
+    if (!_sapp_glx_GetFBConfigs ||
+        !_sapp_glx_GetFBConfigAttrib ||
+        !_sapp_glx_GetClientString ||
+        !_sapp_glx_QueryExtension ||
+        !_sapp_glx_QueryVersion ||
+        !_sapp_glx_DestroyContext ||
+        !_sapp_glx_MakeCurrent ||
+        !_sapp_glx_SwapBuffers ||
+        !_sapp_glx_QueryExtensionsString ||
+        !_sapp_glx_CreateNewContext ||
+        !_sapp_glx_CreateWindow ||
+        !_sapp_glx_DestroyWindow ||
+        !_sapp_glx_GetProcAddress ||
+        !_sapp_glx_GetProcAddressARB ||
+        !_sapp_glx_GetVisualFromFBConfig)
+    {
+        _sapp_fail("GLX: failed to load required entry points");
+    }
+
+    if (!_sapp_glx_QueryExtension(_sapp_x11_display,
+                           &_sapp_glx_errorbase,
+                           &_sapp_glx_eventbase))
+    {
+        _sapp_fail("GLX: GLX extension not found");
+    }
+    if (!_sapp_glx_QueryVersion(_sapp_x11_display, &_sapp_glx_major, &_sapp_glx_minor)) {
+        _sapp_fail("GLX: Failed to query GLX version");
+    }
+    if (_sapp_glx_major == 1 && _sapp_glx_minor < 3) {
+        _sapp_fail("GLX: GLX version 1.3 is required");
+    }
+    const char* exts = _sapp_glx_QueryExtensionsString(_sapp_x11_display, _sapp_x11_screen);
+    if (_sapp_glx_extsupported("GLX_EXT_swap_control", exts)) {
+        _sapp_glx_SwapIntervalEXT = (PFNGLXSWAPINTERVALEXTPROC) _sapp_glx_getprocaddr("glXSwapIntervalEXT");
+        _sapp_glx_EXT_swap_control = 0 != _sapp_glx_SwapIntervalEXT;
+    }
+    if (_sapp_glx_extsupported("GLX_MESA_swap_control", exts)) {
+        _sapp_glx_SwapIntervalMESA = (PFNGLXSWAPINTERVALMESAPROC) _sapp_glx_getprocaddr("glXSwapIntervalMESA");
+        _sapp_glx_MESA_swap_control = 0 != _sapp_glx_SwapIntervalMESA;
+    }
+    _sapp_glx_ARB_multisample = _sapp_glx_extsupported("GLX_ARB_multisample", exts);
+    _sapp_glx_ARB_framebuffer_sRGB = _sapp_glx_extsupported("GLX_ARB_framebuffer_sRGB", exts);
+    _sapp_glx_EXT_framebuffer_sRGB = _sapp_glx_extsupported("GLX_EXT_framebuffer_sRGB", exts);
+    if (_sapp_glx_extsupported("GLX_ARB_create_context", exts)) {
+        _sapp_glx_CreateContextAttribsARB = (PFNGLXCREATECONTEXTATTRIBSARBPROC) _sapp_glx_getprocaddr("glXCreateContextAttribsARB");
+        _sapp_glx_ARB_create_context = 0 != _sapp_glx_CreateContextAttribsARB;
+    }
+    _sapp_glx_ARB_create_context_profile = _sapp_glx_extsupported("GLX_ARB_create_context_profile", exts);
+}
+
 
 int main(int argc, char* argv[]) {
     sapp_desc desc = sokol_main(argc, argv);
@@ -2978,6 +3199,10 @@ int main(int argc, char* argv[]) {
     _sapp.dpi_scale = _sapp_x11_dpi / 96.0f; 
 
     // FIXME: query extensions
+
+    _sapp_glx_init();
+
+
 
     XCloseDisplay(_sapp_x11_display);
     return 0;

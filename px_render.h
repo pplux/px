@@ -492,27 +492,27 @@ namespace px_render {
     Data *data_ = nullptr;
   };
 
+  struct RenderContextParams {
+    // Max number of any element is 2^20... the other 12 bits are
+    // reserved to detect dangling pointers.
+
+    uint32_t max_textures = 128;
+    uint32_t max_buffers = 128;
+    uint32_t max_framebuffers = 128;
+    uint32_t max_pipelines = 64;
+
+    // if no error callback is provider, stderr will be used to spit
+    // out possible problems. Once an error is produced, there is no 
+    // guarantee that any given command will not end in crashing the app.
+    void (*on_error_callback)(const char *error) = nullptr;
+  };
+
   struct RenderContext {
     RenderContext();
     ~RenderContext();
 
-    struct Params {
-      // Max number of any element is 2^20... the other 12 bits are
-      // reserved to detect dangling pointers.
-
-      uint32_t max_textures = 128;
-      uint32_t max_buffers = 128;
-      uint32_t max_framebuffers = 128;
-      uint32_t max_pipelines = 64;
-
-      // if no error callback is provider, stderr will be used to spit
-      // out possible problems. Once an error is produced, there is no 
-      // guarantee that any given command will not end in crashing the app.
-      void (*on_error_callback)(const char *error) = nullptr;
-    };
-
     // allocate resources to handle all objects that can be created later
-    void init(const Params &params = Params());
+    void init(const RenderContextParams &params = RenderContextParams());
 
     // marks the render context for destruction on the next executeOnGPU
     void finish();
@@ -554,6 +554,11 @@ namespace px_render {
 
 #ifdef PX_RENDER_IMPLEMENTATION
 
+#if !defined(PX_RENDER_BACKEND_GL) \
+ && !defined(PX_RENDER_BACKEND_GLES)
+#  define PX_REDER_BACKEND_GL 
+#endif
+
 #include <vector>
 #include <algorithm>
 #include <memory>
@@ -564,6 +569,7 @@ namespace px_render {
 #include <mutex>
 #include <string>
 #include <cassert>
+#include <cstdarg>
 
 namespace px_render {
 
@@ -655,67 +661,6 @@ namespace px_render {
     Mem<Texture> color_texture;
     Texture depth_texture;
   };
-
-  template<class T>
-  uint32_t AcquireResource(RenderContext *ctx, Mem<T> *pool) {
-    uint32_t try_count = 10; //<... should never need this but...
-    while (try_count--) {
-      for (uint32_t i = 0; i < pool->count; ++i) {
-        uint32_t version = 0;
-        if ((*pool)[i].acquire(&version)) {
-          return i | (version << 20) ;
-        }
-      }
-    }
-    // ... no luck
-    ctx->data_->params.on_error_callback("Could not Acquire Resource[T]");
-    return 0;
-  }
-
-  uint32_t IDToIndex(uint32_t id) {
-    return id & 0x000FFFFF;
-  }
-
-  std::pair<uint32_t, uint32_t> IDToIndexAndVersion(uint32_t id) {
-    uint32_t pos     = id & 0x000FFFFF;
-    uint32_t version = (id & 0xFFF00000)>>20;
-    return {pos,version};
-  }
-
-  template<class T>
-  bool CheckValidResource(const RenderContext::Data *ctx, uint32_t id, const Mem<T> *pool) {
-    auto pv = IDToIndexAndVersion(id);
-    uint32_t pos     = pv.first;
-    uint32_t version = pv.second;
-    const T* result = &(*pool)[pos];
-    uint32_t real_version = result->state.load();
-    if (real_version == version) {
-      return true;
-    }
-    return false;
-  }
-
-  template<class T>
-  void CheckValidResourceOrError(const RenderContext::Data *ctx, uint32_t id, const Mem<T> *pool) {
-    if (!CheckValidResource(ctx, id, pool)) {
-      auto pv = IDToIndexAndVersion(id);
-      OnError(ctx, "Invalid Resource Pointer (Dangling reference) ref %u --> pos %u, version %u", id, pv.first, pv.second);
-    }
-  }
-
-  template<class T, class B>
-  std::pair<T*,B*> GetResource(RenderContext::Data *ctx, uint32_t id, Mem<T> *instance_array, Mem<B> *backend_array) {
-    CheckValidResourceOrError(ctx, id, instance_array);
-    uint32_t index = IDToIndex(id);
-    return {&(*instance_array)[index], &(*backend_array)[index]};
-  }
-
-  template<class T>
-  T* GetResource(RenderContext::Data *ctx, uint32_t id, Mem<T> *instance_array) {
-    CheckValidResourceOrError(ctx, id, instance_array);
-    uint32_t index = IDToIndex(id);
-    return &(*instance_array)[index];
-  }
 
   struct BackEnd;
 
@@ -825,7 +770,7 @@ namespace px_render {
     bool inv_projection_matrix_computed = false;
     Mat4 model_matrix;
     Pipeline last_pipeline = {};
-    Params params;
+    RenderContextParams params;
     // Back end -----------------------------------
     BackEnd *back_end = nullptr;
   };
@@ -844,7 +789,68 @@ namespace px_render {
     }
   }
 
-  static void InitBackEnd(BackEnd **b, const RenderContext::Params &params);
+  template<class T>
+  static uint32_t AcquireResource(RenderContext *ctx, Mem<T> *pool) {
+    uint32_t try_count = 10; //<... should never need this but...
+    while (try_count--) {
+      for (uint32_t i = 0; i < pool->count; ++i) {
+        uint32_t version = 0;
+        if ((*pool)[i].acquire(&version)) {
+          return i | (version << 20) ;
+        }
+      }
+    }
+    // ... no luck
+    ctx->data_->params.on_error_callback("Could not Acquire Resource[T]");
+    return 0;
+  }
+
+  static uint32_t IDToIndex(uint32_t id) {
+    return id & 0x000FFFFF;
+  }
+
+  static std::pair<uint32_t, uint32_t> IDToIndexAndVersion(uint32_t id) {
+    uint32_t pos     = id & 0x000FFFFF;
+    uint32_t version = (id & 0xFFF00000)>>20;
+    return {pos,version};
+  }
+
+  template<class T>
+  static bool CheckValidResource(const RenderContext::Data *ctx, uint32_t id, const Mem<T> *pool) {
+    auto pv = IDToIndexAndVersion(id);
+    uint32_t pos     = pv.first;
+    uint32_t version = pv.second;
+    const T* result = &(*pool)[pos];
+    uint32_t real_version = result->state.load();
+    if (real_version == version) {
+      return true;
+    }
+    return false;
+  }
+
+  template<class T>
+  static void CheckValidResourceOrError(const RenderContext::Data *ctx, uint32_t id, const Mem<T> *pool) {
+    if (!CheckValidResource(ctx, id, pool)) {
+      auto pv = IDToIndexAndVersion(id);
+      OnError(ctx, "Invalid Resource Pointer (Dangling reference) ref %u --> pos %u, version %u", id, pv.first, pv.second);
+    }
+  }
+
+  template<class T, class B>
+  static std::pair<T*,B*> GetResource(RenderContext::Data *ctx, uint32_t id, Mem<T> *instance_array, Mem<B> *backend_array) {
+    CheckValidResourceOrError(ctx, id, instance_array);
+    uint32_t index = IDToIndex(id);
+    return {&(*instance_array)[index], &(*backend_array)[index]};
+  }
+
+  template<class T>
+  static T* GetResource(RenderContext::Data *ctx, uint32_t id, Mem<T> *instance_array) {
+    CheckValidResourceOrError(ctx, id, instance_array);
+    uint32_t index = IDToIndex(id);
+    return &(*instance_array)[index];
+  }
+
+  static void InitBackEnd(BackEnd **b, const RenderContextParams &params);
   static void DestroyBackEnd(BackEnd **b);
   static void ExecuteDisplayList(RenderContext::Data *data, const DisplayList::Data *dl);
   static void PatchLastDisplayListCommand(DisplayList::Data *dl);
@@ -872,7 +878,7 @@ namespace px_render {
     data_ = nullptr;
   }
 
-  void RenderContext::init(const RenderContext::Params &params) {
+  void RenderContext::init(const RenderContextParams &params) {
     data_->params = params;
     data_->pipelines.alloc(params.max_pipelines);
     data_->framebuffers.alloc(params.max_framebuffers);
@@ -1094,7 +1100,7 @@ namespace px_render {
 
   #define COMMAND(name, NAME) \
     DisplayList::NAME##Data& DisplayList::name ## Command() { \
-      return *EmplaceCommand<NAME##Data>(data_, Command::Type::##NAME); \
+      return *EmplaceCommand<NAME##Data>(data_, Command::Type::NAME); \
     } \
     static void Execute(RenderContext::Data *, const DisplayList::NAME ## Data &, const Mem<uint8_t> *);
 
@@ -1214,9 +1220,9 @@ namespace px_render {
     #define MAT(m,r,c) (m)[(c)*4+(r)]
     #define SWAP_ROWS(a, b) { float *_tmp = a; (a)=(b); (b)=_tmp; }
 
-    GLfloat wtmp[4][8];
-    GLfloat m0, m1, m2, m3, s;
-    GLfloat *r0, *r1, *r2, *r3;
+    float wtmp[4][8];
+    float m0, m1, m2, m3, s;
+    float *r0, *r1, *r2, *r3;
 
     r0 = wtmp[0], r1 = wtmp[1], r2 = wtmp[2], r3 = wtmp[3];
 
@@ -1440,8 +1446,12 @@ namespace px_render {
     {"u_invViewProjection",ComputeInvViewProjection},
   };
 
+
 // BackEnd Implementation ----------------------------------------------------
 
+#ifdef PX_RENDER_BACKEND_GLES
+  #define glClearDepth glClearDepthf
+#endif
   
   struct BackEnd {
     struct Pipeline {
@@ -1475,7 +1485,7 @@ namespace px_render {
   };
 
 
-  static void InitBackEnd(BackEnd **b, const RenderContext::Params &params) {
+  static void InitBackEnd(BackEnd **b, const RenderContextParams &params) {
     *b = new BackEnd();
     (*b)->pipelines.alloc(params.max_pipelines);
     (*b)->buffers.alloc(params.max_buffers);
@@ -1749,11 +1759,15 @@ namespace px_render {
           break;
       }
       switch (t.first->info.type) {
+        #ifdef PX_RENDER_BACKEND_GL
         case TextureType::T1D:
           t.second->target = GL_TEXTURE_1D;
           GLCHECK(glBindTexture(GL_TEXTURE_1D, id));
           GLCHECK(glTexImage1D(GL_TEXTURE_1D, 0, back_end->format, t.first->info.width, 0, back_end->format, back_end->type, nullptr));
           TextureInitialization(ctx, GL_TEXTURE_1D, t.first->info);
+        #else
+          OnError(ctx, "Texture1D not supported");
+        #endif
           break;
         case TextureType::T2D:
           t.second->target = GL_TEXTURE_2D;
@@ -1782,8 +1796,12 @@ namespace px_render {
       GLCHECK(glBindTexture(back_end.target, back_end.texture));
       glPixelStorei(GL_PACK_ALIGNMENT, 1);
       switch (t.first->info.type) {
+        #ifdef PX_RENDER_BACKEND_GL
         case TextureType::T1D:
           GLCHECK(glTexSubImage1D(GL_TEXTURE_1D,0, d.offset_x, d.width, back_end.format, back_end.type, payloads->data.get()))
+        #else
+          OnError(ctx, "Texture1D not supported");
+        #endif
           break;
         case TextureType::T2D:
           GLCHECK(glTexSubImage2D(GL_TEXTURE_2D,0, d.offset_x, d.offset_y, d.width, d.height, back_end.format, back_end.type, payloads->data.get()))
@@ -1984,7 +2002,7 @@ namespace px_render {
     if (pi.second->uniforms_location[0] >= 0) {
       if (payloads) {
         size_t count = payloads->count/(sizeof(float)*4);
-        GLCHECK(glUniform4fv(pi.second->uniforms_location[0], count, (const GLfloat*) payloads->data.get()));
+        GLCHECK(glUniform4fv(pi.second->uniforms_location[0], count, (const float*) payloads->data.get()));
       } else {
         OnError(ctx, "Expecting a payloads shader requires uniform_data but none was given");
       }
@@ -2001,7 +2019,9 @@ namespace px_render {
         
         GLCHECK(glActiveTexture(GL_TEXTURE0+tex_unit));
         switch (ti.first->info.type) {
+        #ifdef PX_RENDER_BACKEND_GL
           case TextureType::T1D: GLCHECK(glBindTexture(GL_TEXTURE_1D, ti.second->texture)); break;
+        #endif
           case TextureType::T2D: GLCHECK(glBindTexture(GL_TEXTURE_2D, ti.second->texture)); break;
           case TextureType::T3D: GLCHECK(glBindTexture(GL_TEXTURE_3D, ti.second->texture)); break;
           default:
