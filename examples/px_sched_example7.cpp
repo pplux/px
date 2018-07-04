@@ -1,14 +1,13 @@
 // Example-7:
 // Multiple Readers, Single Writer pattern
 
-
 #include <cstdlib> // demo: rand 
 #include <mutex> // for the scoped lock
 
 //#define PX_SCHED_CONFIG_SINGLE_THREAD 1
 #define PX_SCHED_IMPLEMENTATION 1
 #include "../px_sched.h"
-#include "mem_check.h"
+#include "common/mem_check.h"
 
 
 template<class T>

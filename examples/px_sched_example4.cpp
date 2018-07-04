@@ -3,7 +3,7 @@
 
 #define PX_SCHED_IMPLEMENTATION 1
 #include "../px_sched.h"
-#include "mem_check.h"
+#include "common/mem_check.h"
 
 int main(int, char **) {
   atexit(mem_report);
