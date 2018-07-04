@@ -2,7 +2,7 @@
 Single Header C++ Command Based backend renderer 
 
 Written in C++11/14, with no dependency, and easy to integrate. See a complete example
-[test1.cpp](https://github.com/pplux/px/blob/master/examples/px_render_example_rtt.cpp).
+[HelloWorldTriangle](https://github.com/pplux/px/blob/master/examples/px_render_example_triangle.cpp),  [RenderToTexture](https://github.com/pplux/px/blob/master/examples/px_render_example_rtt.cpp).
 
 The API itself is render agnostic, and will support multiple backends in the future (OpenGL, Vulkan, DX,...) but right now it only supports OpenGL to start with.
 
@@ -13,7 +13,7 @@ The API itself is render agnostic, and will support multiple backends in the fut
 * No dependency on other libraries, portable and easy to extend
 * Implicit task graph dependency for single or groups of tasks
 
-Thanks to [bgfx](https://github.com/bkaradzic/bgfx) and [sokol_gfx.h](https://github.com/floooh/sokol/blob/master/sokol_gfx.h) they've been a great inspiration. I should write about them and to enumerate how px_render.h is different, *sometime in the future...*
+Thanks to [bgfx](https://github.com/bkaradzic/bgfx) and [sokol_gfx.h](https://github.com/floooh/sokol/blob/master/sokol_gfx.h) they've been a great inspiration, you can read about why px_render and how it compares to bgfx and sokol_gfx [here](https://pplux.github.io/why_px_render.html).
 
 ## API:
 
