@@ -237,11 +237,11 @@ enum ImGuiColumnsFlags_
 enum ImGuiSelectableFlagsPrivate_
 {
     // NB: need to be in sync with last value of ImGuiSelectableFlags_
-    ImGuiSelectableFlags_NoHoldingActiveID  = 1 << 3,
-    ImGuiSelectableFlags_PressedOnClick     = 1 << 4,
-    ImGuiSelectableFlags_PressedOnRelease   = 1 << 5,
-    ImGuiSelectableFlags_Disabled           = 1 << 6,
-    ImGuiSelectableFlags_DrawFillAvailWidth = 1 << 7
+    ImGuiSelectableFlags_NoHoldingActiveID  = 1 << 10,
+    ImGuiSelectableFlags_PressedOnClick     = 1 << 11,
+    ImGuiSelectableFlags_PressedOnRelease   = 1 << 12,
+    ImGuiSelectableFlags_Disabled           = 1 << 13,
+    ImGuiSelectableFlags_DrawFillAvailWidth = 1 << 14
 };
 
 enum ImGuiSeparatorFlags_
@@ -692,6 +692,7 @@ struct ImGuiContext
 
     // Drag and Drop
     bool                    DragDropActive;
+    bool                    DragDropWithinSourceOrTarget;
     ImGuiDragDropFlags      DragDropSourceFlags;
     int                     DragDropMouseButton;
     ImGuiPayload            DragDropPayload;
@@ -810,7 +811,7 @@ struct ImGuiContext
         OverlayDrawList._OwnerName = "##Overlay"; // Give it a name for debugging
         MouseCursor = ImGuiMouseCursor_Arrow;
 
-        DragDropActive = false;
+        DragDropActive = DragDropWithinSourceOrTarget = false;
         DragDropSourceFlags = 0;
         DragDropMouseButton = -1;
         DragDropTargetId = 0;
@@ -1130,8 +1131,6 @@ namespace ImGui
     IMGUI_API bool          BeginDragDropTargetCustom(const ImRect& bb, ImGuiID id);
     IMGUI_API void          ClearDragDrop();
     IMGUI_API bool          IsDragDropPayloadBeingAccepted();
-    IMGUI_API void          BeginDragDropTooltip();
-    IMGUI_API void          EndDragDropTooltip();
 
     // FIXME-WIP: New Columns API
     IMGUI_API void          BeginColumns(const char* str_id, int count, ImGuiColumnsFlags flags = 0); // setup number of columns. use an identifier to distinguish multiple column sets. close with EndColumns().
@@ -1175,7 +1174,6 @@ namespace ImGui
 
     // Shade functions (write over already created vertices)
     IMGUI_API void          ShadeVertsLinearColorGradientKeepAlpha(ImDrawVert* vert_start, ImDrawVert* vert_end, ImVec2 gradient_p0, ImVec2 gradient_p1, ImU32 col0, ImU32 col1);
-    IMGUI_API void          ShadeVertsLinearAlphaGradientForLeftToRightText(ImDrawVert* vert_start, ImDrawVert* vert_end, float gradient_p0_x, float gradient_p1_x);
     IMGUI_API void          ShadeVertsLinearUV(ImDrawVert* vert_start, ImDrawVert* vert_end, const ImVec2& a, const ImVec2& b, const ImVec2& uv_a, const ImVec2& uv_b, bool clamp);
 
 } // namespace ImGui

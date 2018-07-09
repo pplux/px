@@ -2,9 +2,6 @@
 /*
     sokol_app.h -- cross-platform application wrapper
 
-    Portions of the Windows and Linux GL initialization and event code have been
-    taken from GLFW (http://www.glfw.org/)
-
     Do this:
         #define SOKOL_IMPL
     before you include this file in *one* C or C++ file to create the 
@@ -22,6 +19,11 @@
 
     SOKOL_DEBUG         - by default this is defined if _DEBUG is defined
 
+    Portions of the Windows and Linux GL initialization and event code have been
+    taken from GLFW (http://www.glfw.org/)
+
+    iOS onscreen keyboard support 'inspired' by libgfx.
+
     FIXME: ERROR HANDLING (this will need an error callback function)
 
     If you use sokol_app.h together with sokol_gfx.h, include both headers
@@ -33,6 +35,19 @@
     contains just enough of GL for sokol_gfx.h. If you want to use your own
     GL header-generator/loader instead, define SOKOL_WIN32_NO_GL_LOADER
     before including the implementation part of sokol_app.h.
+
+    TEMP NOTE DUMP
+    ==============
+    - need callbacks for application suspend/resume, these would
+      also be used for WebGL context lost (?)
+    - need a way to quit application programmatically (sapp_request_quit())
+    - need a way to intercept a pending quit via UI close button (could be
+      done via frame_cb return value, and a sapp_quit_requested() function)
+    - onscreen keyboard support on Android requires Java :(, should we even bother?
+    - sapp_desc needs a bool whether to initialize depth-stencil surface
+    - GL context initialization needs more control (at least what GL version to initialize)
+    - application icon
+    - mouse pointer visibility(?)
 
     FEATURE OVERVIEW
     ================
@@ -46,9 +61,221 @@
     - platforms: MacOS, iOS, HTML5, Win32 (planned: Linux, Android, RaspberryPi)
     - 3D-APIs: Metal, D3D11, GL3.2, GLES2, GLES3, WebGL, WebGL2
 
-    HOW TO USE
+    FEATURE/PLATFORM MATRIX
+    =======================
+                    | Windows | macOS | Linux |  iOS  | Android | Raspi | HTML5
+    ----------------+---------+-------+-------+-------+---------+-------+-------
+    gl 3.x          | YES     | ---   | YES   | ---   | ---     | ---   | ---
+    gles2/webgl     | ---     | ---   | ---   | YES   | TODO    | TODO  | YES
+    gles3/webgl2    | ---     | ---   | ---   | YES   | TODO    | ---   | YES
+    metal           | ---     | YES   | ---   | YES   | ---     | ---   | ---
+    d3d11           | YES     | ---   | ---   | ---   | ---     | ---   | ---
+    key up/down     | YES     | YES   | YES   | ---   | ---     | TODO  | YES
+    char input      | YES     | YES   | YES   | YES   | TODO    | TODO  | YES
+    IME             | TODO    | TODO? | TODO  | ???   | TODO    | ???   | ???
+    mouse buttons   | YES     | YES   | YES   | ---   | ---     | TODO  | YES
+    mouse move      | YES     | YES   | YES   | ---   | ---     | TODO  | YES
+    mouse wheel     | YES     | YES   | YES   | ---   | ---     | TODO  | YES
+    touch input     | ---     | ---   | ---   | YES   | TODO    | ---   | YES
+    windowed        | YES     | YES   | YES   | ---   | ---     | TODO  | YES
+    fullscreen      | TODO    | YES   | TODO  | YES   | TODO    | TODO  | ---
+    pointer lock    | TODO    | TODO  | TODO  | ---   | ---     | TODO  | TODO
+    screen keyboard | ---     | ---   | ---   | YES   | TODO    | ---   | TODO
+    swap interval   | TODO    | TODO  | TODO  | TODO  | TODO    | TODO  | TODO
+    high-dpi        | YES     | YES   | TODO  | YES   | TODO    | TODO  | YES
+
+    - what about bluetooth keyboard / mouse on mobile platforms?
+
+    STEP BY STEP
+    ============
+    --- Add a sokol_main() to your code which returns a sapp_desc structure
+        with initialization parameters and callback function pointers. This
+        function is called very early, usually at the start of the 
+        platform's entry function (e.g. main or WinMain). You should do as
+        little as possible here, since the rest of your code might be called
+        from another thread (this depends on the platform):
+
+            sapp_desc sokol_main(int argc, char* argv[]) {
+                return (sapp_desc) {
+                    .width = 640,
+                    .height = 480,
+                    .init_cb = my_init_func,
+                    .frame_cb = my_frame_func,
+                    .cleanup_cb = my_cleanup_func,
+                    .event_cb = my_event_func,
+                    ...
+                };
+            }
+
+        There are many more setup parameters, but these are the most important.
+        For a complete list search for the sapp_desc structure declaration
+        below.
+
+        DO NOT call any sokol-app function from inside sokol_main(), since
+        sokol-app will not be initialized at this point. 
+
+        The .width and .height parameters are the preferred size of the 3D
+        rendering canvas. The actual size may differ from this depending on
+        platform and other circumstances. Also the canvas size may change at
+        any time (for instance when the user resizes the application window,
+        or rotates the mobile device).
+
+        All provided function callbacks will be called from the same thread,
+        but this may be different from the thread where sokol_main() was called.
+
+        .init_cb (void (init_cb*)(void))
+            This function is called once after the application window,
+            3D rendering context and swap chain have been created. The
+            function takes no arguments and has no return value.
+        .frame_cb (void (frame_cb*)(void))
+            This is the per-frame callback, which is usually called 60
+            times per second. This is where your application would update
+            most of its state and perform all rendering.
+        .cleanup_cb (void (cleanup_cb*)(void))
+            The cleanup callback is called once right before the application
+            quits.
+        .event_cb (void (event-cb*)(const sapp_event* event))
+            The event callback is mainly for input handling, but in the
+            future may also be used to communicate other types of events
+            to the application. Keep the event_cb struct member zero-initialized
+            if your application doesn't require event handling.
+                      
+    --- Implement the initialization callback function, this is called once
+        after the rendering surface, 3D API and swap chain have been
+        initialized by sokol_app. All sokol-app functions can be called
+        from inside the initialization callback, the most useful functions
+        at this point are:
+
+        int sapp_width(void)
+            Returns the current width of the default framebuffer, this may change
+            from one frame to the next.
+        int sapp_height(void)
+            Likewise, returns the current height of the default framebuffer.
+        
+        bool sapp_gles2(void)
+            Returns true if as GLES2 or WebGL2 context had been created (for
+            instance because GLES3/WebGL2 isn't available on the device)
+
+        const void* sapp_metal_get_device(void);
+        const void* sapp_metal_get_renderpass_descriptor(void)
+        const void* sapp_metal_get_drawable(void)
+            If the Metal backend has been selected, these functions return pointers
+            to various Metal API objects required for rendering, otherwise
+            they return a null pointer. Note that the returned pointers
+            to the renderpass-descriptor and drawable may change from one
+            frame to the next!
+
+        const void* sapp_d3d11_get_device(void);
+        const void* sapp_d3d11_get_device_context(void);
+        const void* sapp_d3d11_get_render_target_view(void);
+        const void* sapp_d3d11_get_depth_stencil_view(void);
+            Similar to the sapp_metal_* functions, the sapp_d3d11_* functions
+            return pointers to D3D11 API objects required for rendering, 
+            only if the D3D11 backend has been selected. Otherwise they
+            return a null pointer. Note that the returned pointers to thr
+            render-target-view and depth-stencil-view may change from one
+            frame to the next!
+
+    --- Implement the frame-callback function, this function will be called
+        on the same thread as the init callback, but might be on a different
+        thread than the sokol_main() function. Note that the size of
+        the rendering framebuffer might have change since the frame callback
+        was called last. Call the functions sapp_width() and sapp_height()
+        to get the current size.
+
+    --- Optionally implement the event-callback to handle input events.
+        sokol-app provides the following type of input events:
+            - a 'virtual key' was pressed down or released
+            - a single text character was entered (provided as UTF-32 code point)
+            - a mouse button was pressed down or released (left, right, middle)
+            - mouse-wheel or 2D scrolling events
+            - the mouse was moved
+            - the mouse has entered or left the application window boundaries
+            - low-level, portable multi-touch events (began, moved, ended, cancelled)
+        More types of events will be added in the future (like window
+        minimized, maximized, application life cycle events, etc...)
+
+    --- Implement the cleanup-callback function, this is called once
+        after the user quits the application (currently there's now way
+        to quite the application programmatically)
+
+
+    HIGH-DPI RENDERING
+    ==================
+    You can set the sapp_desc.high_dpi flag during initialization to request
+    a full-resolution framebuffer on HighDPI displays. The default behaviour
+    is sapp_desc.high_dpi=false, this means that the application will
+    render to a lower-resolution framebuffer on HighDPI displays and the
+    rendered content will be upscaled by the window system composer.
+
+    In a HighDPI scenario, you still request the same window size during
+    sokol_main(), but the framebuffer sizes returned by sapp_width()
+    and sapp_height() will be scaled up according to the DPI scaling
+    ratio. You can also get a DPI scaling factor with the function
+    sapp_dpi_scale().
+
+    Here's an example on a Mac with Retina display:
+
+    sapp_desc sokol_main() {
+        return (sapp_desc) {
+            .width = 640,
+            .height = 480,
+            .high_dpi = true,
+            ...
+        };
+    }
+
+    The functions sapp_width(), sapp_height() and sapp_dpi_scale() will
+    return the following values:
+
+    sapp_width      -> 1280
+    sapp_height     -> 960
+    sapp_dpi_scale  -> 2.0
+
+    If the high_dpi flag is false, or you're not running on a Retina display,
+    the values would be:
+
+    sapp_width      -> 640
+    sapp_height     -> 480
+    sapp_dpi_scale  -> 1.0
+
+    FULLSCREEN
     ==========
-    FIXME!
+    If the sapp_desc.fullscreen flag is true, sokol-app will try to create
+    a fullscreen window on platforms with a 'proper' window system 
+    (mobile devices will always use fullscreen). The implementation details
+    depend on the target platform, in general sokol-app will use a
+    'soft approach' which doesn't interfer too much with the platform's
+    window system (for instance borderless fullscreen window instead of
+    a 'real' fullscreen mode). Such details might change over time
+    as sokol-app is adapted for different needs.
+
+    The most important effect of fullscreen mode to keep in mind is that
+    the requested canvas width and heigth will be ignored for the initial
+    window size, calling sapp_width() and sapp_height() will instead return
+    the resolution of the fullscreen canvas (however the provided size
+    might still be used for the non-fullscreen window, in case the user can
+    switch back from fullscreen- to windowed-mode).
+
+    ONSCREEN KEYBOARD
+    =================
+    On some platforms which don't provide a physical keyboard, sokol-app
+    can display the platform's integrated oncscreen keyboard for text
+    input. To request that the onscreen keyboard is shown, call
+
+        sapp_show_keyboard(true);
+
+    Likewise, to hide the keyboard call:
+
+        sapp_show_keyboard(false);
+
+    Note that on the web platform, the keyboard can only be shown from
+    inside an input handler. On such platforms, sapp_show_keyboard()
+    will only work as expected when it is called from inside the
+    sokol-app event callback function. When called from other places,
+    an internal flag will be set, and the onscreen keyboard will be
+    called at the next 'legal' opportunity (when the next input event
+    is handled).
 
     zlib/libpng license
 
@@ -228,7 +455,7 @@ typedef enum {
     SAPP_KEYCODE_RIGHT_ALT        = 346,
     SAPP_KEYCODE_RIGHT_SUPER      = 347,
     SAPP_KEYCODE_MENU             = 348,
-} sapp_keycode; 
+} sapp_keycode;
 
 typedef struct {
     uintptr_t identifier;
@@ -283,6 +510,7 @@ typedef struct {
     const char* window_title;
     const char* html5_canvas_name;
     bool html5_canvas_resize;
+    bool ios_keyboard_resizes_canvas;
 } sapp_desc;
 
 /* user-provided functions */
@@ -294,6 +522,8 @@ extern int sapp_width(void);
 extern int sapp_height(void);
 extern bool sapp_high_dpi(void);
 extern float sapp_dpi_scale(void);
+extern void sapp_show_keyboard(bool visible);
+extern bool sapp_keyboard_shown(void);
 
 /* GL/GLES specific functions */
 extern bool sapp_gles2(void);
@@ -362,6 +592,15 @@ extern const void* sapp_d3d11_get_depth_stencil_view(void);
     #include <assert.h>
     #define SOKOL_ASSERT(c) assert(c)
 #endif
+#if !defined(SOKOL_CALLOC) && !defined(SOKOL_FREE)
+    #include <stdlib.h>
+#endif
+#if !defined(SOKOL_CALLOC)
+    #define SOKOL_CALLOC(n,s) calloc(n,s)
+#endif
+#if !defined(SOKOL_FREE)
+    #define SOKOL_FREE(p) free(p)
+#endif
 #ifndef SOKOL_LOG
     #ifdef SOKOL_DEBUG 
         #include <stdio.h>
@@ -413,6 +652,7 @@ typedef struct {
     float mouse_x;
     float mouse_y;
     bool win32_mouse_tracked;
+    bool onscreen_keyboard_shown;
     sapp_event event;
     sapp_desc desc;
     int argc;
@@ -649,9 +889,9 @@ int main(int argc, char* argv[]) {
     _sapp_init_state(&desc, argc, argv);
     _sapp_macos_init_keytable();
     [NSApplication sharedApplication];
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    NSApp.activationPolicy = NSApplicationActivationPolicyRegular;
     _sapp_app_dlg_obj = [[_sapp_app_delegate alloc] init];
-    [NSApp setDelegate:_sapp_app_dlg_obj];
+    NSApp.delegate = _sapp_app_dlg_obj;
     [NSApp activateIgnoringOtherApps:YES];
     [NSApp run];
     return 0;
@@ -675,7 +915,7 @@ _SOKOL_PRIVATE void _sapp_macos_frame(void) {
 @implementation _sapp_app_delegate
 - (void)applicationDidFinishLaunching:(NSNotification*)aNotification {
     if (_sapp.desc.fullscreen) {
-        NSRect screen_rect = [[NSScreen mainScreen] frame];
+        NSRect screen_rect = NSScreen.mainScreen.frame;
         _sapp.window_width = screen_rect.size.width;
         _sapp.window_height = screen_rect.size.height;
         if (_sapp.desc.high_dpi) {
@@ -698,32 +938,32 @@ _SOKOL_PRIVATE void _sapp_macos_frame(void) {
         styleMask:style
         backing:NSBackingStoreBuffered
         defer:NO];
-    [_sapp_window_obj setTitle:[NSString stringWithUTF8String:_sapp.window_title]];
-    [_sapp_window_obj setAcceptsMouseMovedEvents:YES];
-    [_sapp_window_obj setRestorable:YES];
+    _sapp_window_obj.title = [NSString stringWithUTF8String:_sapp.window_title];
+    _sapp_window_obj.acceptsMouseMovedEvents = YES;
+    _sapp_window_obj.restorable = YES;
     _sapp_win_dlg_obj = [[_sapp_window_delegate alloc] init];
-    [_sapp_window_obj setDelegate:_sapp_win_dlg_obj];
+    _sapp_window_obj.delegate = _sapp_win_dlg_obj;
     _sapp_mtl_device_obj = MTLCreateSystemDefaultDevice();
     _sapp_mtk_view_dlg_obj = [[_sapp_mtk_view_dlg alloc] init];
     _sapp_view_obj = [[_sapp_view alloc] init];
-    [_sapp_view_obj setPreferredFramesPerSecond:60];
-    [_sapp_view_obj setDelegate:_sapp_mtk_view_dlg_obj];
-    [_sapp_view_obj setDevice:_sapp_mtl_device_obj];
-    [_sapp_view_obj setColorPixelFormat:MTLPixelFormatBGRA8Unorm];
-    [_sapp_view_obj setDepthStencilPixelFormat:MTLPixelFormatDepth32Float_Stencil8];
-    [_sapp_view_obj setSampleCount:_sapp.sample_count];
-    [_sapp_window_obj setContentView:_sapp_view_obj];
+    _sapp_view_obj.preferredFramesPerSecond = 60;
+    _sapp_view_obj.delegate = _sapp_mtk_view_dlg_obj;
+    _sapp_view_obj.device = _sapp_mtl_device_obj;
+    _sapp_view_obj.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
+    _sapp_view_obj.depthStencilPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
+    _sapp_view_obj.sampleCount = _sapp.sample_count;
+    _sapp_window_obj.contentView = _sapp_view_obj;
     [_sapp_window_obj makeFirstResponder:_sapp_view_obj];
     if (!_sapp.desc.high_dpi) {
         CGSize drawable_size = { (CGFloat) _sapp.framebuffer_width, (CGFloat) _sapp.framebuffer_height };
-        [_sapp_view_obj setDrawableSize:drawable_size];
+        _sapp_view_obj.drawableSize = drawable_size;
     }
     CGSize drawable_size = _sapp_view_obj.drawableSize;
     _sapp.framebuffer_width = drawable_size.width;
     _sapp.framebuffer_height = drawable_size.height;
     SOKOL_ASSERT((_sapp.framebuffer_width > 0) && (_sapp.framebuffer_height > 0));
     _sapp.dpi_scale = (float)_sapp.framebuffer_width / (float)_sapp.window_width;
-    [[_sapp_view_obj layer] setMagnificationFilter:kCAFilterNearest];
+    _sapp_view_obj.layer.magnificationFilter = kCAFilterNearest;
     if (_sapp.desc.fullscreen) {
         [_sapp_window_obj toggleFullScreen:self];
     }
@@ -906,6 +1146,11 @@ _SOKOL_PRIVATE void _sapp_macos_key_event(sapp_event_type type, sapp_keycode key
 
 @interface _sapp_app_delegate : NSObject<UIApplicationDelegate>
 @end
+@interface _sapp_textfield_dlg : NSObject<UITextFieldDelegate>
+- (void)keyboardWasShown:(NSNotification*)notif;
+- (void)keyboardWillBeHidden:(NSNotification*)notif;
+- (void)keyboardDidChangeFrame:(NSNotification*)notif;
+@end
 #if defined(SOKOL_METAL)
 @interface _sapp_mtk_view_dlg : NSObject<MTKViewDelegate>
 @end
@@ -920,14 +1165,16 @@ _SOKOL_PRIVATE void _sapp_macos_key_event(sapp_event_type type, sapp_keycode key
 
 static UIWindow* _sapp_window_obj;
 static _sapp_view* _sapp_view_obj;
+static UITextField* _sapp_textfield_obj;
+static _sapp_textfield_dlg* _sapp_textfield_dlg_obj;
 #if defined(SOKOL_METAL)
 static _sapp_mtk_view_dlg* _sapp_mtk_view_dlg_obj;
-static UIViewController<MTKViewDelegate>* _sapp_mtk_view_ctrl_obj;
+static UIViewController<MTKViewDelegate>* _sapp_view_ctrl_obj;
 static id<MTLDevice> _sapp_mtl_device_obj;
 #else
 static EAGLContext* _sapp_eagl_ctx_obj;
 static _sapp_glk_view_dlg* _sapp_glk_view_dlg_obj;
-static GLKViewController* _sapp_glk_view_ctrl_obj;
+static GLKViewController* _sapp_view_ctrl_obj;
 #endif
 
 /* iOS entry function */
@@ -941,7 +1188,7 @@ int main(int argc, char** argv) {
 }
 
 _SOKOL_PRIVATE void _sapp_ios_frame(void) {
-    CGRect screen_rect = [[UIScreen mainScreen] bounds];
+    CGRect screen_rect = UIScreen.mainScreen.bounds;
     _sapp.window_width = (int) screen_rect.size.width;
     _sapp.window_height = (int) screen_rect.size.height;
     #if defined(SOKOL_METAL)
@@ -957,9 +1204,43 @@ _SOKOL_PRIVATE void _sapp_ios_frame(void) {
     _sapp_frame();
 }
 
+_SOKOL_PRIVATE void _sapp_ios_show_keyboard(bool shown) {
+    /* if not happened yet, create an invisible text field */
+    if (nil == _sapp_textfield_obj) {
+        _sapp_textfield_dlg_obj = [[_sapp_textfield_dlg alloc] init];
+        _sapp_textfield_obj = [[UITextField alloc] initWithFrame:CGRectMake(10, 10, 100, 50)];
+        _sapp_textfield_obj.keyboardType = UIKeyboardTypeDefault;
+        _sapp_textfield_obj.returnKeyType = UIReturnKeyDefault;
+        _sapp_textfield_obj.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        _sapp_textfield_obj.autocorrectionType = UITextAutocorrectionTypeNo;
+        _sapp_textfield_obj.spellCheckingType = UITextSpellCheckingTypeNo;
+        _sapp_textfield_obj.hidden = YES;
+        _sapp_textfield_obj.text = @"x";
+        _sapp_textfield_obj.delegate = _sapp_textfield_dlg_obj;
+        [_sapp_view_ctrl_obj.view addSubview:_sapp_textfield_obj];
+
+        [[NSNotificationCenter defaultCenter] addObserver:_sapp_textfield_dlg_obj
+            selector:@selector(keyboardWasShown:)
+            name:UIKeyboardDidShowNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:_sapp_textfield_dlg_obj
+            selector:@selector(keyboardWillBeHidden:)
+            name:UIKeyboardWillHideNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:_sapp_textfield_dlg_obj
+            selector:@selector(keyboardDidChangeFrame:)
+            name:UIKeyboardDidChangeFrameNotification object:nil];
+    }
+    if (shown) {
+        /* setting the text field as first responder brings up the onscreen keyboard */
+        [_sapp_textfield_obj becomeFirstResponder];
+    }
+    else {
+        [_sapp_textfield_obj resignFirstResponder];
+    }
+}
+
 @implementation _sapp_app_delegate
 - (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)launchOptions {
-    CGRect screen_rect = [[UIScreen mainScreen] bounds];
+    CGRect screen_rect = UIScreen.mainScreen.bounds;
     _sapp_window_obj = [[UIWindow alloc] initWithFrame:screen_rect];
     _sapp.window_width = screen_rect.size.width;
     _sapp.window_height = screen_rect.size.height;
@@ -976,24 +1257,24 @@ _SOKOL_PRIVATE void _sapp_ios_frame(void) {
         _sapp_mtl_device_obj = MTLCreateSystemDefaultDevice();
         _sapp_mtk_view_dlg_obj = [[_sapp_mtk_view_dlg alloc] init];
         _sapp_view_obj = [[_sapp_view alloc] init];
-        [_sapp_view_obj setPreferredFramesPerSecond:60];
-        [_sapp_view_obj setDelegate:_sapp_mtk_view_dlg_obj];
-        [_sapp_view_obj setDevice:_sapp_mtl_device_obj];
-        [_sapp_view_obj setColorPixelFormat:MTLPixelFormatBGRA8Unorm];
-        [_sapp_view_obj setDepthStencilPixelFormat:MTLPixelFormatDepth32Float_Stencil8];
-        [_sapp_view_obj setSampleCount:_sapp.sample_count];
+        _sapp_view_obj.preferredFramesPerSecond = 60;
+        _sapp_view_obj.delegate = _sapp_mtk_view_dlg_obj;
+        _sapp_view_obj.device = _sapp_mtl_device_obj;
+        _sapp_view_obj.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
+        _sapp_view_obj.depthStencilPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
+        _sapp_view_obj.sampleCount = _sapp.sample_count;
         if (_sapp.desc.high_dpi) {
-            [_sapp_view_obj setContentScaleFactor:2.0];
+            _sapp_view_obj.contentScaleFactor = 2.0;
         }
         else {
-            [_sapp_view_obj setContentScaleFactor:1.0];
+            _sapp_view_obj.contentScaleFactor = 1.0;
         }
-        [_sapp_view_obj setUserInteractionEnabled:YES];
-        [_sapp_view_obj setMultipleTouchEnabled:YES];
+        _sapp_view_obj.userInteractionEnabled = YES;
+        _sapp_view_obj.multipleTouchEnabled = YES;
         [_sapp_window_obj addSubview:_sapp_view_obj];
-        _sapp_mtk_view_ctrl_obj = [[UIViewController<MTKViewDelegate> alloc] init];
-        [_sapp_mtk_view_ctrl_obj setView:_sapp_view_obj];
-        [_sapp_window_obj setRootViewController:_sapp_mtk_view_ctrl_obj];
+        _sapp_view_ctrl_obj = [[UIViewController<MTKViewDelegate> alloc] init];
+        _sapp_view_ctrl_obj.view = _sapp_view_obj;
+        _sapp_window_obj.rootViewController = _sapp_view_ctrl_obj;
     #else
         _sapp_eagl_ctx_obj = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
         if (_sapp_eagl_ctx_obj == nil) {
@@ -1002,30 +1283,105 @@ _SOKOL_PRIVATE void _sapp_ios_frame(void) {
         }
         _sapp_glk_view_dlg_obj = [[_sapp_glk_view_dlg alloc] init];
         _sapp_view_obj = [[_sapp_view alloc] initWithFrame:screen_rect];
-        [_sapp_view_obj setDrawableColorFormat:GLKViewDrawableColorFormatRGBA8888];
-        [_sapp_view_obj setDrawableDepthFormat:GLKViewDrawableDepthFormat24];
-        [_sapp_view_obj setDrawableStencilFormat:GLKViewDrawableStencilFormatNone];
-        [_sapp_view_obj setDrawableMultisample:GLKViewDrawableMultisampleNone]; /* FIXME */
-        [_sapp_view_obj setContext:_sapp_eagl_ctx_obj];
-        [_sapp_view_obj setDelegate:_sapp_glk_view_dlg_obj];
-        [_sapp_view_obj setEnableSetNeedsDisplay:NO];
-        [_sapp_view_obj setUserInteractionEnabled:YES];
-        [_sapp_view_obj setMultipleTouchEnabled:YES];
+        _sapp_view_obj.drawableColorFormat = GLKViewDrawableColorFormatRGBA8888;
+        _sapp_view_obj.drawableDepthFormat = GLKViewDrawableDepthFormat24;
+        _sapp_view_obj.drawableStencilFormat = GLKViewDrawableStencilFormatNone;
+        _sapp_view_obj.drawableMultisample = GLKViewDrawableMultisampleNone; /* FIXME */
+        _sapp_view_obj.context = _sapp_eagl_ctx_obj;
+        _sapp_view_obj.delegate = _sapp_glk_view_dlg_obj;
+        _sapp_view_obj.enableSetNeedsDisplay = NO;
+        _sapp_view_obj.userInteractionEnabled = YES;
+        _sapp_view_obj.multipleTouchEnabled = YES;
         if (_sapp.desc.high_dpi) {
-            [_sapp_view_obj setContentScaleFactor:2.0];
+            _sapp_view_obj.contentScaleFactor = 2.0;
         }
         else {
-            [_sapp_view_obj setContentScaleFactor:1.0];
+            _sapp_view_obj.contentScaleFactor = 1.0;
         }
         [_sapp_window_obj addSubview:_sapp_view_obj];
-        _sapp_glk_view_ctrl_obj = [[GLKViewController alloc] init];
-        [_sapp_glk_view_ctrl_obj setView:_sapp_view_obj];
-        [_sapp_glk_view_ctrl_obj setPreferredFramesPerSecond:60];
-        [_sapp_window_obj setRootViewController:_sapp_glk_view_ctrl_obj];
+        _sapp_view_ctrl_obj = [[GLKViewController alloc] init];
+        _sapp_view_ctrl_obj.view = _sapp_view_obj;
+        _sapp_view_ctrl_obj.preferredFramesPerSecond = 60;
+        _sapp_window_obj.rootViewController = _sapp_view_ctrl_obj;
     #endif
     [_sapp_window_obj makeKeyAndVisible];
+
     _sapp.valid = true;
     return YES;
+}
+@end
+
+@implementation _sapp_textfield_dlg
+- (void)keyboardWasShown:(NSNotification*)notif {
+    _sapp.onscreen_keyboard_shown = true;
+    /* query the keyboard's size, and modify the content view's size */
+    if (_sapp.desc.ios_keyboard_resizes_canvas) {
+        NSDictionary* info = notif.userInfo;
+        CGFloat kbd_h = [[info objectForKey:UIKeyboardFrameEndUserInfoKey] CGRectValue].size.height;
+        CGRect view_frame = UIScreen.mainScreen.bounds;
+        view_frame.size.height -= kbd_h;
+        _sapp_view_obj.frame = view_frame;
+    }
+}
+- (void)keyboardWillBeHidden:(NSNotification*)notif {
+    _sapp.onscreen_keyboard_shown = false;
+    if (_sapp.desc.ios_keyboard_resizes_canvas) {
+        _sapp_view_obj.frame = UIScreen.mainScreen.bounds;
+    }
+}
+- (void)keyboardDidChangeFrame:(NSNotification*)notif {
+    /* this is for the case when the screen rotation changes while the keyboard is open */
+    if (_sapp.onscreen_keyboard_shown && _sapp.desc.ios_keyboard_resizes_canvas) {
+        NSDictionary* info = notif.userInfo;
+        CGFloat kbd_h = [[info objectForKey:UIKeyboardFrameEndUserInfoKey] CGRectValue].size.height;
+        CGRect view_frame = UIScreen.mainScreen.bounds;
+        view_frame.size.height -= kbd_h;
+        _sapp_view_obj.frame = view_frame;
+    }
+}
+- (BOOL)textField:(UITextField*)textField shouldChangeCharactersInRange:(NSRange)range replacementString:(NSString*)string {
+    if (_sapp_events_enabled()) {
+        const NSUInteger len = string.length;
+        if (len > 0) {
+            for (NSUInteger i = 0; i < len; i++) {
+                unichar c = [string characterAtIndex:i];
+                if (c >= 32) {
+                    /* ignore surrogats for now */
+                    if ((c < 0xD800) || (c > 0xDFFF)) {
+                        _sapp_init_event(SAPP_EVENTTYPE_CHAR);
+                        _sapp.event.char_code = c;
+                        _sapp.desc.event_cb(&_sapp.event);
+                    }
+                }
+                if (c <= 32) {
+                    sapp_keycode k = SAPP_KEYCODE_INVALID;
+                    switch (c) {
+                        case 10: k = SAPP_KEYCODE_ENTER; break;
+                        case 32: k = SAPP_KEYCODE_SPACE; break;
+                        default: break;
+                    }
+                    if (k != SAPP_KEYCODE_INVALID) {
+                        _sapp_init_event(SAPP_EVENTTYPE_KEY_DOWN);
+                        _sapp.event.key_code = k;
+                        _sapp.desc.event_cb(&_sapp.event);
+                        _sapp_init_event(SAPP_EVENTTYPE_KEY_UP);
+                        _sapp.event.key_code = k;
+                        _sapp.desc.event_cb(&_sapp.event);
+                    }
+                }
+            }
+        }
+        else {
+            /* this was a backspace */
+            _sapp_init_event(SAPP_EVENTTYPE_KEY_DOWN);
+            _sapp.event.key_code = SAPP_KEYCODE_BACKSPACE;
+            _sapp.desc.event_cb(&_sapp.event);
+            _sapp_init_event(SAPP_EVENTTYPE_KEY_UP);
+            _sapp.event.key_code = SAPP_KEYCODE_BACKSPACE;
+            _sapp.desc.event_cb(&_sapp.event);
+        }
+    }
+    return NO;
 }
 @end
 
@@ -1054,7 +1410,7 @@ _SOKOL_PRIVATE void _sapp_ios_frame(void) {
 _SOKOL_PRIVATE void _sapp_ios_touch_event(sapp_event_type type, NSSet<UITouch *>* touches, UIEvent* event) {
     if (_sapp_events_enabled()) {
         _sapp_init_event(type);
-        NSEnumerator* enumerator = [[event allTouches] objectEnumerator];
+        NSEnumerator* enumerator = event.allTouches.objectEnumerator;
         UITouch* ios_touch;
         while ((ios_touch = [enumerator nextObject])) {
             if ((_sapp.event.num_touches + 1) < SAPP_MAX_TOUCHPOINTS) {
@@ -1106,6 +1462,23 @@ _SOKOL_PRIVATE void _sapp_ios_touch_event(sapp_event_type type, NSSet<UITouch *>
 #endif
 #include <emscripten/emscripten.h>
 #include <emscripten/html5.h>
+
+static bool _sapp_emsc_input_created;
+
+/* FIXME: currently this must be called from inside event handler */
+_SOKOL_PRIVATE void _sapp_emsc_show_keyboard(bool show) {
+    /* create HTML text input field if not happened yet */
+    if (_sapp_emsc_input_created) {
+        _sapp_emsc_input_created = true;
+        /* FIXME: actually create the text input field */
+    }
+    if (show) {
+        /* FIXME: focus the text input field, this will bring up the keyboard */
+    }
+    else {
+        /* FIXME: unfocus the text input field */
+    }
+}
 
 _SOKOL_PRIVATE EM_BOOL _sapp_emsc_size_changed(int event_type, const EmscriptenUiEvent* ui_event, void* user_data) {
     double w, h;
@@ -1175,7 +1548,7 @@ _SOKOL_PRIVATE EM_BOOL _sapp_emsc_mouse_cb(int emsc_type, const EmscriptenMouseE
                     case 0: _sapp.event.mouse_button = SAPP_MOUSEBUTTON_LEFT; break;
                     case 1: _sapp.event.mouse_button = SAPP_MOUSEBUTTON_MIDDLE; break;
                     case 2: _sapp.event.mouse_button = SAPP_MOUSEBUTTON_RIGHT; break;
-                    default: _sapp.event.mouse_button = (sapp_mousebutton)emsc_event->button; break;
+                    default: _sapp.event.mouse_button = emsc_event->button; break;
                 }
             }
             else {
@@ -1476,7 +1849,117 @@ int main(int argc, char* argv[]) {
 }
 #endif  /* __EMSCRIPTEN__ */
 
-/*== WINDOW ==================================================================*/
+/*== MISC GL SUPPORT FUNCTIONS ================================================*/
+#if defined(SOKOL_GLCORE33)
+typedef struct {
+    int         red_bits;
+    int         green_bits;
+    int         blue_bits;
+    int         alpha_bits;
+    int         depth_bits;
+    int         stencil_bits;
+    int         samples;
+    bool        doublebuffer;
+    uintptr_t   handle;
+} _sapp_gl_fbconfig;
+
+_SOKOL_PRIVATE void _sapp_gl_init_fbconfig(_sapp_gl_fbconfig* fbconfig) {
+    memset(fbconfig, 0, sizeof(_sapp_gl_fbconfig));
+    /* -1 means "don't care" */
+    fbconfig->red_bits = -1;
+    fbconfig->green_bits = -1;
+    fbconfig->blue_bits = -1;
+    fbconfig->alpha_bits = -1;
+    fbconfig->depth_bits = -1;
+    fbconfig->stencil_bits = -1;
+    fbconfig->samples = -1;
+}
+
+_SOKOL_PRIVATE const _sapp_gl_fbconfig* _sapp_gl_choose_fbconfig(const _sapp_gl_fbconfig* desired, const _sapp_gl_fbconfig* alternatives, unsigned int count) {
+    unsigned int i;
+    unsigned int missing, least_missing = 1000000;
+    unsigned int color_diff, least_color_diff = 10000000;
+    unsigned int extra_diff, least_extra_diff = 10000000;
+    const _sapp_gl_fbconfig* current;
+    const _sapp_gl_fbconfig* closest = NULL;
+    for (i = 0;  i < count;  i++) {
+        current = alternatives + i;
+        if (desired->doublebuffer != current->doublebuffer) {
+            continue;
+        }
+        missing = 0;
+        if (desired->alpha_bits > 0 && current->alpha_bits == 0) {
+            missing++;
+        }
+        if (desired->depth_bits > 0 && current->depth_bits == 0) {
+            missing++;
+        }
+        if (desired->stencil_bits > 0 && current->stencil_bits == 0) {
+            missing++;
+        }
+        if (desired->samples > 0 && current->samples == 0) {
+            /* Technically, several multisampling buffers could be
+                involved, but that's a lower level implementation detail and
+                not important to us here, so we count them as one
+            */
+            missing++;
+        }
+
+        /* These polynomials make many small channel size differences matter
+            less than one large channel size difference
+            Calculate color channel size difference value
+        */
+        color_diff = 0;
+        if (desired->red_bits != -1) {
+            color_diff += (desired->red_bits - current->red_bits) * (desired->red_bits - current->red_bits);
+        }
+        if (desired->green_bits != -1) {
+            color_diff += (desired->green_bits - current->green_bits) * (desired->green_bits - current->green_bits);
+        }
+        if (desired->blue_bits != -1) {
+            color_diff += (desired->blue_bits - current->blue_bits) * (desired->blue_bits - current->blue_bits);
+        }
+
+        /* Calculate non-color channel size difference value */
+        extra_diff = 0;
+        if (desired->alpha_bits != -1) {
+            extra_diff += (desired->alpha_bits - current->alpha_bits) * (desired->alpha_bits - current->alpha_bits);
+        }
+        if (desired->depth_bits != -1) {
+            extra_diff += (desired->depth_bits - current->depth_bits) * (desired->depth_bits - current->depth_bits);
+        }
+        if (desired->stencil_bits != -1) {
+            extra_diff += (desired->stencil_bits - current->stencil_bits) * (desired->stencil_bits - current->stencil_bits);
+        }
+        if (desired->samples != -1) {
+            extra_diff += (desired->samples - current->samples) * (desired->samples - current->samples);
+        }
+
+        /* Figure out if the current one is better than the best one found so far
+            Least number of missing buffers is the most important heuristic,
+            then color buffer size match and lastly size match for other buffers
+        */
+        if (missing < least_missing) {
+            closest = current;
+        }
+        else if (missing == least_missing) {
+            if ((color_diff < least_color_diff) ||
+                (color_diff == least_color_diff && extra_diff < least_extra_diff))
+            {
+                closest = current;
+            }
+        }
+        if (current == closest) {
+            least_missing = missing;
+            least_color_diff = color_diff;
+            least_extra_diff = extra_diff;
+        }
+    }
+    return closest;
+}
+#endif
+
+/*== WINDOWS ==================================================================*/
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -2758,37 +3241,57 @@ _SOKOL_PRIVATE int _sapp_wgl_attrib(int pixel_format, int attrib) {
 _SOKOL_PRIVATE int _sapp_wgl_find_pixel_format(void) {
     SOKOL_ASSERT(_sapp_win32_dc);
     SOKOL_ASSERT(_sapp_arb_pixel_format);
+    const _sapp_gl_fbconfig* closest;
+
     int native_count = _sapp_wgl_attrib(1, WGL_NUMBER_PIXEL_FORMATS_ARB);
+    _sapp_gl_fbconfig* usable_configs = (_sapp_gl_fbconfig*) SOKOL_CALLOC(native_count, sizeof(_sapp_gl_fbconfig));
+    int usable_count = 0;
     for (int i = 0; i < native_count; i++) {
-        const int pf = i + 1;
-        if (_sapp_arb_pixel_format) {
-            if (!_sapp_wgl_attrib(pf, WGL_SUPPORT_OPENGL_ARB) || !_sapp_wgl_attrib(pf, WGL_DRAW_TO_WINDOW_ARB)) {
-                continue;
-            }
-            if (_sapp_wgl_attrib(pf, WGL_PIXEL_TYPE_ARB) != WGL_TYPE_RGBA_ARB) {
-                continue;
-            }
-            if (_sapp_wgl_attrib(pf, WGL_ACCELERATION_ARB) == WGL_NO_ACCELERATION_ARB) {
-                continue;
-            }
-            if ((_sapp_wgl_attrib(pf, WGL_RED_BITS_ARB) == 8) &&
-                (_sapp_wgl_attrib(pf, WGL_GREEN_BITS_ARB) == 8) &&
-                (_sapp_wgl_attrib(pf, WGL_BLUE_BITS_ARB) == 8) &&
-                (_sapp_wgl_attrib(pf, WGL_ALPHA_BITS_ARB) == 8) &&
-                (_sapp_wgl_attrib(pf, WGL_DEPTH_BITS_ARB) == 24) &&
-                (_sapp_wgl_attrib(pf, WGL_STENCIL_BITS_ARB) == 8) &&
-                (_sapp_wgl_attrib(pf, WGL_DOUBLE_BUFFER_ARB) != 0))
-            {
-                if ((_sapp.sample_count > 1) && _sapp_arb_multisample) {
-                    if (_sapp_wgl_attrib(pf, WGL_SAMPLES_ARB) != _sapp.sample_count) {
-                        continue;
-                    }
-                }
-                return pf;
-            }
+        const int n = i + 1;
+        _sapp_gl_fbconfig* u = usable_configs + usable_count;
+        _sapp_gl_init_fbconfig(u);
+        if (!_sapp_wgl_attrib(n, WGL_SUPPORT_OPENGL_ARB) || !_sapp_wgl_attrib(n, WGL_DRAW_TO_WINDOW_ARB)) {
+            continue;
         }
+        if (_sapp_wgl_attrib(n, WGL_PIXEL_TYPE_ARB) != WGL_TYPE_RGBA_ARB) {
+            continue;
+        }
+        if (_sapp_wgl_attrib(n, WGL_ACCELERATION_ARB) == WGL_NO_ACCELERATION_ARB) {
+            continue;
+        }
+        u->red_bits     = _sapp_wgl_attrib(n, WGL_RED_BITS_ARB);
+        u->green_bits   = _sapp_wgl_attrib(n, WGL_GREEN_BITS_ARB);
+        u->blue_bits    = _sapp_wgl_attrib(n, WGL_BLUE_BITS_ARB);
+        u->alpha_bits   = _sapp_wgl_attrib(n, WGL_ALPHA_BITS_ARB);
+        u->depth_bits   = _sapp_wgl_attrib(n, WGL_DEPTH_BITS_ARB);
+        u->stencil_bits = _sapp_wgl_attrib(n, WGL_STENCIL_BITS_ARB);
+        if (_sapp_wgl_attrib(n, WGL_DOUBLE_BUFFER_ARB)) {
+            u->doublebuffer = true;
+        }
+        if (_sapp_arb_multisample) {
+            u->samples = _sapp_wgl_attrib(n, WGL_SAMPLES_ARB);
+        }
+        u->handle = n;
+        usable_count++;
     }
-    return 0;
+    SOKOL_ASSERT(usable_count > 0);
+    _sapp_gl_fbconfig desired;
+    _sapp_gl_init_fbconfig(&desired);
+    desired.red_bits = 8;
+    desired.green_bits = 8;
+    desired.blue_bits = 8;
+    desired.alpha_bits = 8;
+    desired.depth_bits = 24;
+    desired.stencil_bits = 8;
+    desired.doublebuffer = true;
+    desired.samples = _sapp.sample_count > 1 ? _sapp.sample_count : 0;
+    closest = _sapp_gl_choose_fbconfig(&desired, usable_configs, usable_count);
+    int pixel_format = 0;
+    if (closest) {
+        pixel_format = (int) closest->handle;
+    }
+    SOKOL_FREE(usable_configs);
+    return pixel_format;
 }
 
 _SOKOL_PRIVATE void _sapp_wgl_create_context(void) {
@@ -2930,7 +3433,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 #include <X11/Xlib.h>
 #include <X11/Xresource.h>
 #include <X11/extensions/Xrandr.h>
-#include <GL/glcorearb.h>
+#include <GL/gl.h>
 #include <dlfcn.h> /* dlopen, dlsym, dlclose */
 
 #define GLX_VENDOR 1
@@ -2997,16 +3500,26 @@ typedef void (*PFNGLXDESTROYWINDOWPROC)(Display*,GLXWindow);
 typedef int (*PFNGLXSWAPINTERVALMESAPROC)(int);
 typedef GLXContext (*PFNGLXCREATECONTEXTATTRIBSARBPROC)(Display*,GLXFBConfig,GLXContext,Bool,const int*);
 
+static bool _sapp_x11_quit_requested;
 static Display* _sapp_x11_display;
 static int _sapp_x11_screen;
 static Window _sapp_x11_root;
-static XrmQuark _sapp_x11_context;
+static Colormap _sapp_x11_colormap;
+static Window _sapp_x11_window;
 static float _sapp_x11_dpi;
+static unsigned char _sapp_x11_error_code;
 static void* _sapp_glx_libgl;
 static int _sapp_glx_major;
 static int _sapp_glx_minor;
 static int _sapp_glx_eventbase;
 static int _sapp_glx_errorbase;
+static GLXContext _sapp_glx_ctx;
+static GLXWindow _sapp_glx_window;
+static Atom _sapp_x11_UTF8_STRING;
+static Atom _sapp_x11_WM_PROTOCOLS;
+static Atom _sapp_x11_WM_DELETE_WINDOW;
+static Atom _sapp_x11_NET_WM_NAME;
+static Atom _sapp_x11_NET_WM_ICON_NAME;
 // GLX 1.3 functions
 static PFNGLXGETFBCONFIGSPROC              _sapp_glx_GetFBConfigs;
 static PFNGLXGETFBCONFIGATTRIBPROC         _sapp_glx_GetFBConfigAttrib;
@@ -3028,13 +3541,871 @@ static PFNGLXGETPROCADDRESSPROC            _sapp_glx_GetProcAddressARB;
 static PFNGLXSWAPINTERVALEXTPROC           _sapp_glx_SwapIntervalEXT;
 static PFNGLXSWAPINTERVALMESAPROC          _sapp_glx_SwapIntervalMESA;
 static PFNGLXCREATECONTEXTATTRIBSARBPROC   _sapp_glx_CreateContextAttribsARB;
-static bool        _sapp_glx_EXT_swap_control;
-static bool        _sapp_glx_MESA_swap_control;
-static bool        _sapp_glx_ARB_multisample;
-static bool        _sapp_glx_ARB_framebuffer_sRGB;
-static bool        _sapp_glx_EXT_framebuffer_sRGB;
-static bool        _sapp_glx_ARB_create_context;
-static bool        _sapp_glx_ARB_create_context_profile;
+static bool _sapp_glx_EXT_swap_control;
+static bool _sapp_glx_MESA_swap_control;
+static bool _sapp_glx_ARB_multisample;
+static bool _sapp_glx_ARB_framebuffer_sRGB;
+static bool _sapp_glx_EXT_framebuffer_sRGB;
+static bool _sapp_glx_ARB_create_context;
+static bool _sapp_glx_ARB_create_context_profile;
+
+/* see GLFW's xkb_unicode.c */
+static const struct _sapp_x11_codepair {
+  uint16_t keysym;
+  uint16_t ucs;
+} _sapp_x11_keysymtab[] = {
+  { 0x01a1, 0x0104 }, 
+  { 0x01a2, 0x02d8 }, 
+  { 0x01a3, 0x0141 }, 
+  { 0x01a5, 0x013d }, 
+  { 0x01a6, 0x015a }, 
+  { 0x01a9, 0x0160 },
+  { 0x01aa, 0x015e }, 
+  { 0x01ab, 0x0164 }, 
+  { 0x01ac, 0x0179 }, 
+  { 0x01ae, 0x017d }, 
+  { 0x01af, 0x017b }, 
+  { 0x01b1, 0x0105 },
+  { 0x01b2, 0x02db }, 
+  { 0x01b3, 0x0142 },
+  { 0x01b5, 0x013e },
+  { 0x01b6, 0x015b },
+  { 0x01b7, 0x02c7 },
+  { 0x01b9, 0x0161 },
+  { 0x01ba, 0x015f },
+  { 0x01bb, 0x0165 },
+  { 0x01bc, 0x017a },
+  { 0x01bd, 0x02dd },
+  { 0x01be, 0x017e },
+  { 0x01bf, 0x017c },
+  { 0x01c0, 0x0154 },
+  { 0x01c3, 0x0102 },
+  { 0x01c5, 0x0139 },
+  { 0x01c6, 0x0106 },
+  { 0x01c8, 0x010c },
+  { 0x01ca, 0x0118 },
+  { 0x01cc, 0x011a },
+  { 0x01cf, 0x010e },
+  { 0x01d0, 0x0110 },
+  { 0x01d1, 0x0143 },
+  { 0x01d2, 0x0147 },
+  { 0x01d5, 0x0150 },
+  { 0x01d8, 0x0158 },
+  { 0x01d9, 0x016e },
+  { 0x01db, 0x0170 },
+  { 0x01de, 0x0162 },
+  { 0x01e0, 0x0155 },
+  { 0x01e3, 0x0103 },
+  { 0x01e5, 0x013a },
+  { 0x01e6, 0x0107 },
+  { 0x01e8, 0x010d },
+  { 0x01ea, 0x0119 },
+  { 0x01ec, 0x011b },
+  { 0x01ef, 0x010f },
+  { 0x01f0, 0x0111 },
+  { 0x01f1, 0x0144 },
+  { 0x01f2, 0x0148 },
+  { 0x01f5, 0x0151 },
+  { 0x01f8, 0x0159 },
+  { 0x01f9, 0x016f },
+  { 0x01fb, 0x0171 },
+  { 0x01fe, 0x0163 },
+  { 0x01ff, 0x02d9 },
+  { 0x02a1, 0x0126 },
+  { 0x02a6, 0x0124 },
+  { 0x02a9, 0x0130 },
+  { 0x02ab, 0x011e },
+  { 0x02ac, 0x0134 },
+  { 0x02b1, 0x0127 },
+  { 0x02b6, 0x0125 },
+  { 0x02b9, 0x0131 },
+  { 0x02bb, 0x011f },
+  { 0x02bc, 0x0135 },
+  { 0x02c5, 0x010a },
+  { 0x02c6, 0x0108 },
+  { 0x02d5, 0x0120 },
+  { 0x02d8, 0x011c },
+  { 0x02dd, 0x016c },
+  { 0x02de, 0x015c },
+  { 0x02e5, 0x010b },
+  { 0x02e6, 0x0109 },
+  { 0x02f5, 0x0121 },
+  { 0x02f8, 0x011d },
+  { 0x02fd, 0x016d },
+  { 0x02fe, 0x015d },
+  { 0x03a2, 0x0138 },
+  { 0x03a3, 0x0156 },
+  { 0x03a5, 0x0128 },
+  { 0x03a6, 0x013b },
+  { 0x03aa, 0x0112 },
+  { 0x03ab, 0x0122 },
+  { 0x03ac, 0x0166 },
+  { 0x03b3, 0x0157 },
+  { 0x03b5, 0x0129 },
+  { 0x03b6, 0x013c },
+  { 0x03ba, 0x0113 },
+  { 0x03bb, 0x0123 },
+  { 0x03bc, 0x0167 },
+  { 0x03bd, 0x014a },
+  { 0x03bf, 0x014b },
+  { 0x03c0, 0x0100 },
+  { 0x03c7, 0x012e },
+  { 0x03cc, 0x0116 },
+  { 0x03cf, 0x012a },
+  { 0x03d1, 0x0145 },
+  { 0x03d2, 0x014c },
+  { 0x03d3, 0x0136 },
+  { 0x03d9, 0x0172 },
+  { 0x03dd, 0x0168 },
+  { 0x03de, 0x016a },
+  { 0x03e0, 0x0101 },
+  { 0x03e7, 0x012f },
+  { 0x03ec, 0x0117 },
+  { 0x03ef, 0x012b },
+  { 0x03f1, 0x0146 },
+  { 0x03f2, 0x014d },
+  { 0x03f3, 0x0137 },
+  { 0x03f9, 0x0173 },
+  { 0x03fd, 0x0169 },
+  { 0x03fe, 0x016b },
+  { 0x047e, 0x203e },
+  { 0x04a1, 0x3002 },
+  { 0x04a2, 0x300c },
+  { 0x04a3, 0x300d },
+  { 0x04a4, 0x3001 },
+  { 0x04a5, 0x30fb },
+  { 0x04a6, 0x30f2 },
+  { 0x04a7, 0x30a1 },
+  { 0x04a8, 0x30a3 },
+  { 0x04a9, 0x30a5 },
+  { 0x04aa, 0x30a7 },
+  { 0x04ab, 0x30a9 },
+  { 0x04ac, 0x30e3 },
+  { 0x04ad, 0x30e5 },
+  { 0x04ae, 0x30e7 },
+  { 0x04af, 0x30c3 },
+  { 0x04b0, 0x30fc },
+  { 0x04b1, 0x30a2 },
+  { 0x04b2, 0x30a4 },
+  { 0x04b3, 0x30a6 },
+  { 0x04b4, 0x30a8 },
+  { 0x04b5, 0x30aa },
+  { 0x04b6, 0x30ab },
+  { 0x04b7, 0x30ad },
+  { 0x04b8, 0x30af },
+  { 0x04b9, 0x30b1 },
+  { 0x04ba, 0x30b3 },
+  { 0x04bb, 0x30b5 },
+  { 0x04bc, 0x30b7 },
+  { 0x04bd, 0x30b9 },
+  { 0x04be, 0x30bb },
+  { 0x04bf, 0x30bd },
+  { 0x04c0, 0x30bf },
+  { 0x04c1, 0x30c1 },
+  { 0x04c2, 0x30c4 },
+  { 0x04c3, 0x30c6 },
+  { 0x04c4, 0x30c8 },
+  { 0x04c5, 0x30ca },
+  { 0x04c6, 0x30cb },
+  { 0x04c7, 0x30cc },
+  { 0x04c8, 0x30cd },
+  { 0x04c9, 0x30ce },
+  { 0x04ca, 0x30cf },
+  { 0x04cb, 0x30d2 },
+  { 0x04cc, 0x30d5 },
+  { 0x04cd, 0x30d8 },
+  { 0x04ce, 0x30db },
+  { 0x04cf, 0x30de },
+  { 0x04d0, 0x30df },
+  { 0x04d1, 0x30e0 },
+  { 0x04d2, 0x30e1 },
+  { 0x04d3, 0x30e2 },
+  { 0x04d4, 0x30e4 },
+  { 0x04d5, 0x30e6 },
+  { 0x04d6, 0x30e8 },
+  { 0x04d7, 0x30e9 },
+  { 0x04d8, 0x30ea },
+  { 0x04d9, 0x30eb },
+  { 0x04da, 0x30ec },
+  { 0x04db, 0x30ed },
+  { 0x04dc, 0x30ef },
+  { 0x04dd, 0x30f3 },
+  { 0x04de, 0x309b },
+  { 0x04df, 0x309c },
+  { 0x05ac, 0x060c },
+  { 0x05bb, 0x061b },
+  { 0x05bf, 0x061f },
+  { 0x05c1, 0x0621 },
+  { 0x05c2, 0x0622 },
+  { 0x05c3, 0x0623 },
+  { 0x05c4, 0x0624 },
+  { 0x05c5, 0x0625 },
+  { 0x05c6, 0x0626 },
+  { 0x05c7, 0x0627 },
+  { 0x05c8, 0x0628 },
+  { 0x05c9, 0x0629 },
+  { 0x05ca, 0x062a },
+  { 0x05cb, 0x062b },
+  { 0x05cc, 0x062c },
+  { 0x05cd, 0x062d },
+  { 0x05ce, 0x062e },
+  { 0x05cf, 0x062f },
+  { 0x05d0, 0x0630 },
+  { 0x05d1, 0x0631 },
+  { 0x05d2, 0x0632 },
+  { 0x05d3, 0x0633 },
+  { 0x05d4, 0x0634 },
+  { 0x05d5, 0x0635 },
+  { 0x05d6, 0x0636 },
+  { 0x05d7, 0x0637 },
+  { 0x05d8, 0x0638 },
+  { 0x05d9, 0x0639 },
+  { 0x05da, 0x063a },
+  { 0x05e0, 0x0640 },
+  { 0x05e1, 0x0641 },
+  { 0x05e2, 0x0642 },
+  { 0x05e3, 0x0643 },
+  { 0x05e4, 0x0644 },
+  { 0x05e5, 0x0645 },
+  { 0x05e6, 0x0646 },
+  { 0x05e7, 0x0647 },
+  { 0x05e8, 0x0648 },
+  { 0x05e9, 0x0649 },
+  { 0x05ea, 0x064a },
+  { 0x05eb, 0x064b },
+  { 0x05ec, 0x064c },
+  { 0x05ed, 0x064d },
+  { 0x05ee, 0x064e },
+  { 0x05ef, 0x064f },
+  { 0x05f0, 0x0650 },
+  { 0x05f1, 0x0651 },
+  { 0x05f2, 0x0652 },
+  { 0x06a1, 0x0452 },
+  { 0x06a2, 0x0453 },
+  { 0x06a3, 0x0451 },
+  { 0x06a4, 0x0454 },
+  { 0x06a5, 0x0455 },
+  { 0x06a6, 0x0456 },
+  { 0x06a7, 0x0457 },
+  { 0x06a8, 0x0458 },
+  { 0x06a9, 0x0459 },
+  { 0x06aa, 0x045a },
+  { 0x06ab, 0x045b },
+  { 0x06ac, 0x045c },
+  { 0x06ae, 0x045e },
+  { 0x06af, 0x045f },
+  { 0x06b0, 0x2116 },
+  { 0x06b1, 0x0402 },
+  { 0x06b2, 0x0403 },
+  { 0x06b3, 0x0401 },
+  { 0x06b4, 0x0404 },
+  { 0x06b5, 0x0405 },
+  { 0x06b6, 0x0406 },
+  { 0x06b7, 0x0407 },
+  { 0x06b8, 0x0408 },
+  { 0x06b9, 0x0409 },
+  { 0x06ba, 0x040a },
+  { 0x06bb, 0x040b },
+  { 0x06bc, 0x040c },
+  { 0x06be, 0x040e },
+  { 0x06bf, 0x040f },
+  { 0x06c0, 0x044e },
+  { 0x06c1, 0x0430 },
+  { 0x06c2, 0x0431 },
+  { 0x06c3, 0x0446 },
+  { 0x06c4, 0x0434 },
+  { 0x06c5, 0x0435 },
+  { 0x06c6, 0x0444 },
+  { 0x06c7, 0x0433 },
+  { 0x06c8, 0x0445 },
+  { 0x06c9, 0x0438 },
+  { 0x06ca, 0x0439 },
+  { 0x06cb, 0x043a },
+  { 0x06cc, 0x043b },
+  { 0x06cd, 0x043c },
+  { 0x06ce, 0x043d },
+  { 0x06cf, 0x043e },
+  { 0x06d0, 0x043f },
+  { 0x06d1, 0x044f },
+  { 0x06d2, 0x0440 },
+  { 0x06d3, 0x0441 },
+  { 0x06d4, 0x0442 },
+  { 0x06d5, 0x0443 },
+  { 0x06d6, 0x0436 },
+  { 0x06d7, 0x0432 },
+  { 0x06d8, 0x044c },
+  { 0x06d9, 0x044b },
+  { 0x06da, 0x0437 },
+  { 0x06db, 0x0448 },
+  { 0x06dc, 0x044d },
+  { 0x06dd, 0x0449 },
+  { 0x06de, 0x0447 },
+  { 0x06df, 0x044a },
+  { 0x06e0, 0x042e },
+  { 0x06e1, 0x0410 },
+  { 0x06e2, 0x0411 },
+  { 0x06e3, 0x0426 },
+  { 0x06e4, 0x0414 },
+  { 0x06e5, 0x0415 },
+  { 0x06e6, 0x0424 },
+  { 0x06e7, 0x0413 },
+  { 0x06e8, 0x0425 },
+  { 0x06e9, 0x0418 },
+  { 0x06ea, 0x0419 },
+  { 0x06eb, 0x041a },
+  { 0x06ec, 0x041b },
+  { 0x06ed, 0x041c },
+  { 0x06ee, 0x041d },
+  { 0x06ef, 0x041e },
+  { 0x06f0, 0x041f },
+  { 0x06f1, 0x042f },
+  { 0x06f2, 0x0420 },
+  { 0x06f3, 0x0421 },
+  { 0x06f4, 0x0422 },
+  { 0x06f5, 0x0423 },
+  { 0x06f6, 0x0416 },
+  { 0x06f7, 0x0412 },
+  { 0x06f8, 0x042c },
+  { 0x06f9, 0x042b },
+  { 0x06fa, 0x0417 },
+  { 0x06fb, 0x0428 },
+  { 0x06fc, 0x042d },
+  { 0x06fd, 0x0429 },
+  { 0x06fe, 0x0427 },
+  { 0x06ff, 0x042a },
+  { 0x07a1, 0x0386 },
+  { 0x07a2, 0x0388 },
+  { 0x07a3, 0x0389 },
+  { 0x07a4, 0x038a },
+  { 0x07a5, 0x03aa },
+  { 0x07a7, 0x038c },
+  { 0x07a8, 0x038e },
+  { 0x07a9, 0x03ab },
+  { 0x07ab, 0x038f },
+  { 0x07ae, 0x0385 },
+  { 0x07af, 0x2015 },
+  { 0x07b1, 0x03ac },
+  { 0x07b2, 0x03ad },
+  { 0x07b3, 0x03ae },
+  { 0x07b4, 0x03af },
+  { 0x07b5, 0x03ca },
+  { 0x07b6, 0x0390 },
+  { 0x07b7, 0x03cc },
+  { 0x07b8, 0x03cd },
+  { 0x07b9, 0x03cb },
+  { 0x07ba, 0x03b0 },
+  { 0x07bb, 0x03ce },
+  { 0x07c1, 0x0391 },
+  { 0x07c2, 0x0392 },
+  { 0x07c3, 0x0393 },
+  { 0x07c4, 0x0394 },
+  { 0x07c5, 0x0395 },
+  { 0x07c6, 0x0396 },
+  { 0x07c7, 0x0397 },
+  { 0x07c8, 0x0398 },
+  { 0x07c9, 0x0399 },
+  { 0x07ca, 0x039a },
+  { 0x07cb, 0x039b },
+  { 0x07cc, 0x039c },
+  { 0x07cd, 0x039d },
+  { 0x07ce, 0x039e },
+  { 0x07cf, 0x039f },
+  { 0x07d0, 0x03a0 },
+  { 0x07d1, 0x03a1 },
+  { 0x07d2, 0x03a3 },
+  { 0x07d4, 0x03a4 },
+  { 0x07d5, 0x03a5 },
+  { 0x07d6, 0x03a6 },
+  { 0x07d7, 0x03a7 },
+  { 0x07d8, 0x03a8 },
+  { 0x07d9, 0x03a9 },
+  { 0x07e1, 0x03b1 },
+  { 0x07e2, 0x03b2 },
+  { 0x07e3, 0x03b3 },
+  { 0x07e4, 0x03b4 },
+  { 0x07e5, 0x03b5 },
+  { 0x07e6, 0x03b6 },
+  { 0x07e7, 0x03b7 },
+  { 0x07e8, 0x03b8 },
+  { 0x07e9, 0x03b9 },
+  { 0x07ea, 0x03ba },
+  { 0x07eb, 0x03bb },
+  { 0x07ec, 0x03bc },
+  { 0x07ed, 0x03bd },
+  { 0x07ee, 0x03be },
+  { 0x07ef, 0x03bf },
+  { 0x07f0, 0x03c0 },
+  { 0x07f1, 0x03c1 },
+  { 0x07f2, 0x03c3 },
+  { 0x07f3, 0x03c2 },
+  { 0x07f4, 0x03c4 },
+  { 0x07f5, 0x03c5 },
+  { 0x07f6, 0x03c6 },
+  { 0x07f7, 0x03c7 },
+  { 0x07f8, 0x03c8 },
+  { 0x07f9, 0x03c9 },
+  { 0x08a1, 0x23b7 },
+  { 0x08a2, 0x250c },
+  { 0x08a3, 0x2500 },
+  { 0x08a4, 0x2320 },
+  { 0x08a5, 0x2321 },
+  { 0x08a6, 0x2502 },
+  { 0x08a7, 0x23a1 },
+  { 0x08a8, 0x23a3 },
+  { 0x08a9, 0x23a4 },
+  { 0x08aa, 0x23a6 },
+  { 0x08ab, 0x239b },
+  { 0x08ac, 0x239d },
+  { 0x08ad, 0x239e },
+  { 0x08ae, 0x23a0 },
+  { 0x08af, 0x23a8 },
+  { 0x08b0, 0x23ac },
+  { 0x08bc, 0x2264 },
+  { 0x08bd, 0x2260 },
+  { 0x08be, 0x2265 },
+  { 0x08bf, 0x222b },
+  { 0x08c0, 0x2234 },
+  { 0x08c1, 0x221d },
+  { 0x08c2, 0x221e },
+  { 0x08c5, 0x2207 },
+  { 0x08c8, 0x223c },
+  { 0x08c9, 0x2243 },
+  { 0x08cd, 0x21d4 },
+  { 0x08ce, 0x21d2 },
+  { 0x08cf, 0x2261 },
+  { 0x08d6, 0x221a },
+  { 0x08da, 0x2282 },
+  { 0x08db, 0x2283 },
+  { 0x08dc, 0x2229 },
+  { 0x08dd, 0x222a },
+  { 0x08de, 0x2227 },
+  { 0x08df, 0x2228 },
+  { 0x08ef, 0x2202 },
+  { 0x08f6, 0x0192 },
+  { 0x08fb, 0x2190 },
+  { 0x08fc, 0x2191 },
+  { 0x08fd, 0x2192 },
+  { 0x08fe, 0x2193 },
+  { 0x09e0, 0x25c6 },
+  { 0x09e1, 0x2592 },
+  { 0x09e2, 0x2409 },
+  { 0x09e3, 0x240c },
+  { 0x09e4, 0x240d },
+  { 0x09e5, 0x240a },
+  { 0x09e8, 0x2424 },
+  { 0x09e9, 0x240b },
+  { 0x09ea, 0x2518 },
+  { 0x09eb, 0x2510 },
+  { 0x09ec, 0x250c },
+  { 0x09ed, 0x2514 },
+  { 0x09ee, 0x253c },
+  { 0x09ef, 0x23ba },
+  { 0x09f0, 0x23bb },
+  { 0x09f1, 0x2500 },
+  { 0x09f2, 0x23bc },
+  { 0x09f3, 0x23bd },
+  { 0x09f4, 0x251c },
+  { 0x09f5, 0x2524 },
+  { 0x09f6, 0x2534 },
+  { 0x09f7, 0x252c },
+  { 0x09f8, 0x2502 },
+  { 0x0aa1, 0x2003 },
+  { 0x0aa2, 0x2002 },
+  { 0x0aa3, 0x2004 },
+  { 0x0aa4, 0x2005 },
+  { 0x0aa5, 0x2007 },
+  { 0x0aa6, 0x2008 },
+  { 0x0aa7, 0x2009 },
+  { 0x0aa8, 0x200a },
+  { 0x0aa9, 0x2014 },
+  { 0x0aaa, 0x2013 },
+  { 0x0aae, 0x2026 },
+  { 0x0aaf, 0x2025 },
+  { 0x0ab0, 0x2153 },
+  { 0x0ab1, 0x2154 },
+  { 0x0ab2, 0x2155 },
+  { 0x0ab3, 0x2156 },
+  { 0x0ab4, 0x2157 },
+  { 0x0ab5, 0x2158 },
+  { 0x0ab6, 0x2159 },
+  { 0x0ab7, 0x215a },
+  { 0x0ab8, 0x2105 },
+  { 0x0abb, 0x2012 },
+  { 0x0abc, 0x2329 },
+  { 0x0abe, 0x232a },
+  { 0x0ac3, 0x215b },
+  { 0x0ac4, 0x215c },
+  { 0x0ac5, 0x215d },
+  { 0x0ac6, 0x215e },
+  { 0x0ac9, 0x2122 },
+  { 0x0aca, 0x2613 },
+  { 0x0acc, 0x25c1 },
+  { 0x0acd, 0x25b7 },
+  { 0x0ace, 0x25cb },
+  { 0x0acf, 0x25af },
+  { 0x0ad0, 0x2018 },
+  { 0x0ad1, 0x2019 },
+  { 0x0ad2, 0x201c },
+  { 0x0ad3, 0x201d },
+  { 0x0ad4, 0x211e },
+  { 0x0ad6, 0x2032 },
+  { 0x0ad7, 0x2033 },
+  { 0x0ad9, 0x271d },
+  { 0x0adb, 0x25ac },
+  { 0x0adc, 0x25c0 },
+  { 0x0add, 0x25b6 },
+  { 0x0ade, 0x25cf },
+  { 0x0adf, 0x25ae },
+  { 0x0ae0, 0x25e6 },
+  { 0x0ae1, 0x25ab },
+  { 0x0ae2, 0x25ad },
+  { 0x0ae3, 0x25b3 },
+  { 0x0ae4, 0x25bd },
+  { 0x0ae5, 0x2606 },
+  { 0x0ae6, 0x2022 },
+  { 0x0ae7, 0x25aa },
+  { 0x0ae8, 0x25b2 },
+  { 0x0ae9, 0x25bc },
+  { 0x0aea, 0x261c },
+  { 0x0aeb, 0x261e },
+  { 0x0aec, 0x2663 },
+  { 0x0aed, 0x2666 },
+  { 0x0aee, 0x2665 },
+  { 0x0af0, 0x2720 },
+  { 0x0af1, 0x2020 },
+  { 0x0af2, 0x2021 },
+  { 0x0af3, 0x2713 },
+  { 0x0af4, 0x2717 },
+  { 0x0af5, 0x266f },
+  { 0x0af6, 0x266d },
+  { 0x0af7, 0x2642 },
+  { 0x0af8, 0x2640 },
+  { 0x0af9, 0x260e },
+  { 0x0afa, 0x2315 },
+  { 0x0afb, 0x2117 },
+  { 0x0afc, 0x2038 },
+  { 0x0afd, 0x201a },
+  { 0x0afe, 0x201e },
+  { 0x0ba3, 0x003c },
+  { 0x0ba6, 0x003e },
+  { 0x0ba8, 0x2228 },
+  { 0x0ba9, 0x2227 },
+  { 0x0bc0, 0x00af },
+  { 0x0bc2, 0x22a5 },
+  { 0x0bc3, 0x2229 },
+  { 0x0bc4, 0x230a },
+  { 0x0bc6, 0x005f },
+  { 0x0bca, 0x2218 },
+  { 0x0bcc, 0x2395 },
+  { 0x0bce, 0x22a4 },
+  { 0x0bcf, 0x25cb },
+  { 0x0bd3, 0x2308 },
+  { 0x0bd6, 0x222a },
+  { 0x0bd8, 0x2283 },
+  { 0x0bda, 0x2282 },
+  { 0x0bdc, 0x22a2 },
+  { 0x0bfc, 0x22a3 },
+  { 0x0cdf, 0x2017 },
+  { 0x0ce0, 0x05d0 },
+  { 0x0ce1, 0x05d1 },
+  { 0x0ce2, 0x05d2 },
+  { 0x0ce3, 0x05d3 },
+  { 0x0ce4, 0x05d4 },
+  { 0x0ce5, 0x05d5 },
+  { 0x0ce6, 0x05d6 },
+  { 0x0ce7, 0x05d7 },
+  { 0x0ce8, 0x05d8 },
+  { 0x0ce9, 0x05d9 },
+  { 0x0cea, 0x05da },
+  { 0x0ceb, 0x05db },
+  { 0x0cec, 0x05dc },
+  { 0x0ced, 0x05dd },
+  { 0x0cee, 0x05de },
+  { 0x0cef, 0x05df },
+  { 0x0cf0, 0x05e0 },
+  { 0x0cf1, 0x05e1 },
+  { 0x0cf2, 0x05e2 },
+  { 0x0cf3, 0x05e3 },
+  { 0x0cf4, 0x05e4 },
+  { 0x0cf5, 0x05e5 },
+  { 0x0cf6, 0x05e6 },
+  { 0x0cf7, 0x05e7 },
+  { 0x0cf8, 0x05e8 },
+  { 0x0cf9, 0x05e9 },
+  { 0x0cfa, 0x05ea },
+  { 0x0da1, 0x0e01 },
+  { 0x0da2, 0x0e02 },
+  { 0x0da3, 0x0e03 },
+  { 0x0da4, 0x0e04 },
+  { 0x0da5, 0x0e05 },
+  { 0x0da6, 0x0e06 },
+  { 0x0da7, 0x0e07 },
+  { 0x0da8, 0x0e08 },
+  { 0x0da9, 0x0e09 },
+  { 0x0daa, 0x0e0a },
+  { 0x0dab, 0x0e0b },
+  { 0x0dac, 0x0e0c },
+  { 0x0dad, 0x0e0d },
+  { 0x0dae, 0x0e0e },
+  { 0x0daf, 0x0e0f },
+  { 0x0db0, 0x0e10 },
+  { 0x0db1, 0x0e11 },
+  { 0x0db2, 0x0e12 },
+  { 0x0db3, 0x0e13 },
+  { 0x0db4, 0x0e14 },
+  { 0x0db5, 0x0e15 },
+  { 0x0db6, 0x0e16 },
+  { 0x0db7, 0x0e17 },
+  { 0x0db8, 0x0e18 },
+  { 0x0db9, 0x0e19 },
+  { 0x0dba, 0x0e1a },
+  { 0x0dbb, 0x0e1b },
+  { 0x0dbc, 0x0e1c },
+  { 0x0dbd, 0x0e1d },
+  { 0x0dbe, 0x0e1e },
+  { 0x0dbf, 0x0e1f },
+  { 0x0dc0, 0x0e20 },
+  { 0x0dc1, 0x0e21 },
+  { 0x0dc2, 0x0e22 },
+  { 0x0dc3, 0x0e23 },
+  { 0x0dc4, 0x0e24 },
+  { 0x0dc5, 0x0e25 },
+  { 0x0dc6, 0x0e26 },
+  { 0x0dc7, 0x0e27 },
+  { 0x0dc8, 0x0e28 },
+  { 0x0dc9, 0x0e29 },
+  { 0x0dca, 0x0e2a },
+  { 0x0dcb, 0x0e2b },
+  { 0x0dcc, 0x0e2c },
+  { 0x0dcd, 0x0e2d },
+  { 0x0dce, 0x0e2e },
+  { 0x0dcf, 0x0e2f },
+  { 0x0dd0, 0x0e30 },
+  { 0x0dd1, 0x0e31 },
+  { 0x0dd2, 0x0e32 },
+  { 0x0dd3, 0x0e33 },
+  { 0x0dd4, 0x0e34 },
+  { 0x0dd5, 0x0e35 },
+  { 0x0dd6, 0x0e36 },
+  { 0x0dd7, 0x0e37 },
+  { 0x0dd8, 0x0e38 },
+  { 0x0dd9, 0x0e39 },
+  { 0x0dda, 0x0e3a },
+  { 0x0ddf, 0x0e3f },
+  { 0x0de0, 0x0e40 },
+  { 0x0de1, 0x0e41 },
+  { 0x0de2, 0x0e42 },
+  { 0x0de3, 0x0e43 },
+  { 0x0de4, 0x0e44 },
+  { 0x0de5, 0x0e45 },
+  { 0x0de6, 0x0e46 },
+  { 0x0de7, 0x0e47 },
+  { 0x0de8, 0x0e48 },
+  { 0x0de9, 0x0e49 },
+  { 0x0dea, 0x0e4a },
+  { 0x0deb, 0x0e4b },
+  { 0x0dec, 0x0e4c },
+  { 0x0ded, 0x0e4d },
+  { 0x0df0, 0x0e50 },
+  { 0x0df1, 0x0e51 },
+  { 0x0df2, 0x0e52 },
+  { 0x0df3, 0x0e53 },
+  { 0x0df4, 0x0e54 },
+  { 0x0df5, 0x0e55 },
+  { 0x0df6, 0x0e56 },
+  { 0x0df7, 0x0e57 },
+  { 0x0df8, 0x0e58 },
+  { 0x0df9, 0x0e59 },
+  { 0x0ea1, 0x3131 },
+  { 0x0ea2, 0x3132 },
+  { 0x0ea3, 0x3133 },
+  { 0x0ea4, 0x3134 },
+  { 0x0ea5, 0x3135 },
+  { 0x0ea6, 0x3136 },
+  { 0x0ea7, 0x3137 },
+  { 0x0ea8, 0x3138 },
+  { 0x0ea9, 0x3139 },
+  { 0x0eaa, 0x313a },
+  { 0x0eab, 0x313b },
+  { 0x0eac, 0x313c },
+  { 0x0ead, 0x313d },
+  { 0x0eae, 0x313e },
+  { 0x0eaf, 0x313f },
+  { 0x0eb0, 0x3140 },
+  { 0x0eb1, 0x3141 },
+  { 0x0eb2, 0x3142 },
+  { 0x0eb3, 0x3143 },
+  { 0x0eb4, 0x3144 },
+  { 0x0eb5, 0x3145 },
+  { 0x0eb6, 0x3146 },
+  { 0x0eb7, 0x3147 },
+  { 0x0eb8, 0x3148 },
+  { 0x0eb9, 0x3149 },
+  { 0x0eba, 0x314a },
+  { 0x0ebb, 0x314b },
+  { 0x0ebc, 0x314c },
+  { 0x0ebd, 0x314d },
+  { 0x0ebe, 0x314e },
+  { 0x0ebf, 0x314f },
+  { 0x0ec0, 0x3150 },
+  { 0x0ec1, 0x3151 },
+  { 0x0ec2, 0x3152 },
+  { 0x0ec3, 0x3153 },
+  { 0x0ec4, 0x3154 },
+  { 0x0ec5, 0x3155 },
+  { 0x0ec6, 0x3156 },
+  { 0x0ec7, 0x3157 },
+  { 0x0ec8, 0x3158 },
+  { 0x0ec9, 0x3159 },
+  { 0x0eca, 0x315a },
+  { 0x0ecb, 0x315b },
+  { 0x0ecc, 0x315c },
+  { 0x0ecd, 0x315d },
+  { 0x0ece, 0x315e },
+  { 0x0ecf, 0x315f },
+  { 0x0ed0, 0x3160 },
+  { 0x0ed1, 0x3161 },
+  { 0x0ed2, 0x3162 },
+  { 0x0ed3, 0x3163 },
+  { 0x0ed4, 0x11a8 },
+  { 0x0ed5, 0x11a9 },
+  { 0x0ed6, 0x11aa },
+  { 0x0ed7, 0x11ab },
+  { 0x0ed8, 0x11ac },
+  { 0x0ed9, 0x11ad },
+  { 0x0eda, 0x11ae },
+  { 0x0edb, 0x11af },
+  { 0x0edc, 0x11b0 },
+  { 0x0edd, 0x11b1 },
+  { 0x0ede, 0x11b2 },
+  { 0x0edf, 0x11b3 },
+  { 0x0ee0, 0x11b4 },
+  { 0x0ee1, 0x11b5 },
+  { 0x0ee2, 0x11b6 },
+  { 0x0ee3, 0x11b7 },
+  { 0x0ee4, 0x11b8 },
+  { 0x0ee5, 0x11b9 },
+  { 0x0ee6, 0x11ba },
+  { 0x0ee7, 0x11bb },
+  { 0x0ee8, 0x11bc },
+  { 0x0ee9, 0x11bd },
+  { 0x0eea, 0x11be },
+  { 0x0eeb, 0x11bf },
+  { 0x0eec, 0x11c0 },
+  { 0x0eed, 0x11c1 },
+  { 0x0eee, 0x11c2 },
+  { 0x0eef, 0x316d },
+  { 0x0ef0, 0x3171 },
+  { 0x0ef1, 0x3178 },
+  { 0x0ef2, 0x317f },
+  { 0x0ef3, 0x3181 },
+  { 0x0ef4, 0x3184 },
+  { 0x0ef5, 0x3186 },
+  { 0x0ef6, 0x318d },
+  { 0x0ef7, 0x318e },
+  { 0x0ef8, 0x11eb },
+  { 0x0ef9, 0x11f0 },
+  { 0x0efa, 0x11f9 },
+  { 0x0eff, 0x20a9 },
+  { 0x13a4, 0x20ac },
+  { 0x13bc, 0x0152 },
+  { 0x13bd, 0x0153 },
+  { 0x13be, 0x0178 },
+  { 0x20ac, 0x20ac },
+  { 0xfe50,    '`' },
+  { 0xfe51, 0x00b4 },
+  { 0xfe52,    '^' },
+  { 0xfe53,    '~' },
+  { 0xfe54, 0x00af },
+  { 0xfe55, 0x02d8 },
+  { 0xfe56, 0x02d9 },
+  { 0xfe57, 0x00a8 },
+  { 0xfe58, 0x02da },
+  { 0xfe59, 0x02dd },
+  { 0xfe5a, 0x02c7 },
+  { 0xfe5b, 0x00b8 },
+  { 0xfe5c, 0x02db },
+  { 0xfe5d, 0x037a },
+  { 0xfe5e, 0x309b },
+  { 0xfe5f, 0x309c },
+  { 0xfe63,    '/' },
+  { 0xfe64, 0x02bc },
+  { 0xfe65, 0x02bd },
+  { 0xfe66, 0x02f5 },
+  { 0xfe67, 0x02f3 },
+  { 0xfe68, 0x02cd },
+  { 0xfe69, 0xa788 },
+  { 0xfe6a, 0x02f7 },
+  { 0xfe6e,    ',' },
+  { 0xfe6f, 0x00a4 },
+  { 0xfe80,    'a' }, /* XK_dead_a */
+  { 0xfe81,    'A' }, /* XK_dead_A */
+  { 0xfe82,    'e' }, /* XK_dead_e */
+  { 0xfe83,    'E' }, /* XK_dead_E */
+  { 0xfe84,    'i' }, /* XK_dead_i */
+  { 0xfe85,    'I' }, /* XK_dead_I */
+  { 0xfe86,    'o' }, /* XK_dead_o */
+  { 0xfe87,    'O' }, /* XK_dead_O */
+  { 0xfe88,    'u' }, /* XK_dead_u */
+  { 0xfe89,    'U' }, /* XK_dead_U */
+  { 0xfe8a, 0x0259 },
+  { 0xfe8b, 0x018f },
+  { 0xfe8c, 0x00b5 },
+  { 0xfe90,    '_' },
+  { 0xfe91, 0x02c8 },
+  { 0xfe92, 0x02cc },
+  { 0xff80 /*XKB_KEY_KP_Space*/,     ' ' },
+  { 0xff95 /*XKB_KEY_KP_7*/, 0x0037 },
+  { 0xff96 /*XKB_KEY_KP_4*/, 0x0034 },
+  { 0xff97 /*XKB_KEY_KP_8*/, 0x0038 },
+  { 0xff98 /*XKB_KEY_KP_6*/, 0x0036 },
+  { 0xff99 /*XKB_KEY_KP_2*/, 0x0032 },
+  { 0xff9a /*XKB_KEY_KP_9*/, 0x0039 },
+  { 0xff9b /*XKB_KEY_KP_3*/, 0x0033 },
+  { 0xff9c /*XKB_KEY_KP_1*/, 0x0031 },
+  { 0xff9d /*XKB_KEY_KP_5*/, 0x0035 },
+  { 0xff9e /*XKB_KEY_KP_0*/, 0x0030 },
+  { 0xffaa /*XKB_KEY_KP_Multiply*/,  '*' },
+  { 0xffab /*XKB_KEY_KP_Add*/,       '+' },
+  { 0xffac /*XKB_KEY_KP_Separator*/, ',' },
+  { 0xffad /*XKB_KEY_KP_Subtract*/,  '-' },
+  { 0xffae /*XKB_KEY_KP_Decimal*/,   '.' },
+  { 0xffaf /*XKB_KEY_KP_Divide*/,    '/' },
+  { 0xffb0 /*XKB_KEY_KP_0*/, 0x0030 },
+  { 0xffb1 /*XKB_KEY_KP_1*/, 0x0031 },
+  { 0xffb2 /*XKB_KEY_KP_2*/, 0x0032 },
+  { 0xffb3 /*XKB_KEY_KP_3*/, 0x0033 },
+  { 0xffb4 /*XKB_KEY_KP_4*/, 0x0034 },
+  { 0xffb5 /*XKB_KEY_KP_5*/, 0x0035 },
+  { 0xffb6 /*XKB_KEY_KP_6*/, 0x0036 },
+  { 0xffb7 /*XKB_KEY_KP_7*/, 0x0037 },
+  { 0xffb8 /*XKB_KEY_KP_8*/, 0x0038 },
+  { 0xffb9 /*XKB_KEY_KP_9*/, 0x0039 },
+  { 0xffbd /*XKB_KEY_KP_Equal*/,     '=' }
+};
+
+_SOKOL_PRIVATE int _sapp_x11_error_handler(Display* display, XErrorEvent* event) {
+    _sapp_x11_error_code = event->error_code;
+    return 0;
+}
+
+_SOKOL_PRIVATE void _sapp_x11_grab_error_handler(void) {
+    _sapp_x11_error_code = Success;
+    XSetErrorHandler(_sapp_x11_error_handler);
+}
+
+_SOKOL_PRIVATE void _sapp_x11_release_error_handler(void) {
+    XSync(_sapp_x11_display, False);
+    XSetErrorHandler(NULL);
+}
+
+_SOKOL_PRIVATE void _sapp_x11_init_extensions(void) {
+    _sapp_x11_UTF8_STRING       = XInternAtom(_sapp_x11_display, "UTF8_STRING", False);
+    _sapp_x11_WM_PROTOCOLS      = XInternAtom(_sapp_x11_display, "WM_PROTOCOLS", False);
+    _sapp_x11_WM_DELETE_WINDOW  = XInternAtom(_sapp_x11_display, "WM_DELETE_WINDOW", False);
+    _sapp_x11_NET_WM_NAME    = XInternAtom(_sapp_x11_display, "_NET_WM_NAME", False);
+    _sapp_x11_NET_WM_ICON_NAME = XInternAtom(_sapp_x11_display, "_NET_WM_ICON_NAME", False);
+}
 
 _SOKOL_PRIVATE void _sapp_x11_query_system_dpi(void) {
     /* from GLFW:
@@ -3181,10 +4552,578 @@ _SOKOL_PRIVATE void _sapp_glx_init() {
     _sapp_glx_ARB_create_context_profile = _sapp_glx_extsupported("GLX_ARB_create_context_profile", exts);
 }
 
+_SOKOL_PRIVATE int _sapp_glx_attrib(GLXFBConfig fbconfig, int attrib) {
+    int value;
+    _sapp_glx_GetFBConfigAttrib(_sapp_x11_display, fbconfig, attrib, &value);
+    return value;
+}
+
+_SOKOL_PRIVATE GLXFBConfig _sapp_glx_choosefbconfig() {
+    GLXFBConfig* native_configs;
+    _sapp_gl_fbconfig* usable_configs;
+    const _sapp_gl_fbconfig* closest;
+    int i, native_count, usable_count;
+    const char* vendor;
+    bool trust_window_bit = true;
+
+    /* HACK: This is a (hopefully temporary) workaround for Chromium
+           (VirtualBox GL) not setting the window bit on any GLXFBConfigs
+    */
+    vendor = _sapp_glx_GetClientString(_sapp_x11_display, GLX_VENDOR);
+    if (vendor && strcmp(vendor, "Chromium") == 0) {
+        trust_window_bit = false;
+    }
+
+    native_configs = _sapp_glx_GetFBConfigs(_sapp_x11_display, _sapp_x11_screen, &native_count);
+    if (!native_configs || !native_count) {
+        _sapp_fail("GLX: No GLXFBConfigs returned");
+    }
+
+    usable_configs = (_sapp_gl_fbconfig*) SOKOL_CALLOC(native_count, sizeof(_sapp_gl_fbconfig));
+    usable_count = 0;
+    for (i = 0;  i < native_count;  i++) {
+        const GLXFBConfig n = native_configs[i];
+        _sapp_gl_fbconfig* u = usable_configs + usable_count;
+        _sapp_gl_init_fbconfig(u);
+
+        /* Only consider RGBA GLXFBConfigs */
+        if (!_sapp_glx_attrib(n, GLX_RENDER_TYPE) & GLX_RGBA_BIT) {
+            continue;
+        }
+        /* Only consider window GLXFBConfigs */
+        if (!_sapp_glx_attrib(n, GLX_DRAWABLE_TYPE) & GLX_WINDOW_BIT) {
+            if (trust_window_bit) {
+                continue;
+            }
+        }
+        u->red_bits = _sapp_glx_attrib(n, GLX_RED_SIZE);
+        u->green_bits = _sapp_glx_attrib(n, GLX_GREEN_SIZE);
+        u->blue_bits = _sapp_glx_attrib(n, GLX_BLUE_SIZE);
+        u->alpha_bits = _sapp_glx_attrib(n, GLX_ALPHA_SIZE);
+        u->depth_bits = _sapp_glx_attrib(n, GLX_DEPTH_SIZE);
+        u->stencil_bits = _sapp_glx_attrib(n, GLX_STENCIL_SIZE);
+        if (_sapp_glx_attrib(n, GLX_DOUBLEBUFFER)) {
+            u->doublebuffer = true;
+        }
+        if (_sapp_glx_ARB_multisample) {
+            u->samples = _sapp_glx_attrib(n, GLX_SAMPLES);
+        }
+        u->handle = (uintptr_t) n;
+        usable_count++;
+    }
+    _sapp_gl_fbconfig desired;
+    _sapp_gl_init_fbconfig(&desired);
+    desired.red_bits = 8;
+    desired.green_bits = 8;
+    desired.blue_bits = 8;
+    desired.alpha_bits = 8;
+    desired.depth_bits = 24;
+    desired.stencil_bits = 8;
+    desired.doublebuffer = true;
+    desired.samples = _sapp.sample_count > 1 ? _sapp.sample_count : 0;
+    closest = _sapp_gl_choose_fbconfig(&desired, usable_configs, usable_count);
+    GLXFBConfig result = 0;
+    if (closest) {
+        result = (GLXFBConfig) closest->handle;
+    }
+    XFree(native_configs);
+    SOKOL_FREE(usable_configs);
+    return result;
+}
+
+_SOKOL_PRIVATE void _sapp_glx_choose_visual(Visual** visual, int* depth) {
+    GLXFBConfig native = _sapp_glx_choosefbconfig();
+    if (0 == native) {
+        _sapp_fail("GLX: Failed to find a suitable GLXFBConfig");
+    }
+    XVisualInfo* result = _sapp_glx_GetVisualFromFBConfig(_sapp_x11_display, native);
+    if (!result) {
+        _sapp_fail("GLX: Failed to retrieve Visual for GLXFBConfig");
+    }
+    *visual = result->visual;
+    *depth = result->depth;
+    XFree(result);
+}
+
+_SOKOL_PRIVATE void _sapp_glx_create_context(void) {
+    GLXFBConfig native = _sapp_glx_choosefbconfig();
+    if (0 == native){
+        _sapp_fail("GLX: Failed to find a suitable GLXFBConfig (2)");
+    }
+    if (!(_sapp_glx_ARB_create_context && _sapp_glx_ARB_create_context_profile)) {
+        _sapp_fail("GLX: ARB_create_context and ARB_create_context_profile required");
+    }
+    _sapp_x11_grab_error_handler();
+    const int attribs[] = {
+        GLX_CONTEXT_MAJOR_VERSION_ARB, 3,
+        GLX_CONTEXT_MINOR_VERSION_ARB, 3,
+        GLX_CONTEXT_PROFILE_MASK_ARB, GLX_CONTEXT_CORE_PROFILE_BIT_ARB,
+        GLX_CONTEXT_FLAGS_ARB, GLX_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB,
+        0, 0
+    };
+    _sapp_glx_ctx = _sapp_glx_CreateContextAttribsARB(_sapp_x11_display, native, NULL, True, attribs);
+    if (!_sapp_glx_ctx) {
+        _sapp_fail("GLX: failed to create GL context");
+    }
+    _sapp_x11_release_error_handler();
+    _sapp_glx_window = _sapp_glx_CreateWindow(_sapp_x11_display, native, _sapp_x11_window, NULL);
+    if (!_sapp_glx_window) {
+        _sapp_fail("GLX: failed to create window");
+    }
+}
+
+_SOKOL_PRIVATE void _sapp_glx_destroy_context(void) {
+    if (_sapp_glx_window) {
+        _sapp_glx_DestroyWindow(_sapp_x11_display, _sapp_glx_window);
+        _sapp_glx_window = 0;
+    }
+    if (_sapp_glx_ctx) {
+        _sapp_glx_DestroyContext(_sapp_x11_display, _sapp_glx_ctx);
+        _sapp_glx_ctx = 0;
+    }
+}
+
+_SOKOL_PRIVATE void _sapp_glx_make_current(void) {
+    _sapp_glx_MakeCurrent(_sapp_x11_display, _sapp_glx_window, _sapp_glx_ctx);
+}
+
+_SOKOL_PRIVATE void _sapp_glx_swap_buffers(void) {
+    _sapp_glx_SwapBuffers(_sapp_x11_display, _sapp_glx_window);
+}
+
+_SOKOL_PRIVATE void _sapp_glx_swapinterval(int interval) {
+    if (_sapp_glx_EXT_swap_control) {
+        _sapp_glx_SwapIntervalEXT(_sapp_x11_display, _sapp_glx_window, interval);
+    }
+    else if (_sapp_glx_MESA_swap_control) {
+        _sapp_glx_SwapIntervalMESA(interval);
+    }
+}
+
+_SOKOL_PRIVATE void _sapp_x11_update_window_title(void) {
+    Xutf8SetWMProperties(_sapp_x11_display,
+        _sapp_x11_window,
+        _sapp.window_title, _sapp.window_title,
+        NULL, 0, NULL, NULL, NULL);
+    XChangeProperty(_sapp_x11_display, _sapp_x11_window,
+        _sapp_x11_NET_WM_NAME, _sapp_x11_UTF8_STRING, 8,
+        PropModeReplace,
+        (unsigned char*)_sapp.window_title,
+        strlen(_sapp.window_title));
+    XChangeProperty(_sapp_x11_display, _sapp_x11_window,
+        _sapp_x11_NET_WM_ICON_NAME, _sapp_x11_UTF8_STRING, 8,
+        PropModeReplace,
+        (unsigned char*)_sapp.window_title,
+        strlen(_sapp.window_title));
+    XFlush(_sapp_x11_display);
+}
+
+_SOKOL_PRIVATE void _sapp_x11_query_window_size(void) {
+    XWindowAttributes attribs;
+    XGetWindowAttributes(_sapp_x11_display, _sapp_x11_window, &attribs);
+    _sapp.window_width = attribs.width;
+    _sapp.window_height = attribs.height;
+    _sapp.framebuffer_width = _sapp.window_width;
+    _sapp.framebuffer_height = _sapp.framebuffer_height;
+}
+
+_SOKOL_PRIVATE void _sapp_x11_create_window(Visual* visual, int depth) {
+    _sapp_x11_colormap = XCreateColormap(_sapp_x11_display, _sapp_x11_root, visual, AllocNone);
+    XSetWindowAttributes wa;
+    memset(&wa, 0, sizeof(wa));
+    const uint32_t wamask = CWBorderPixel | CWColormap | CWEventMask;
+    wa.colormap = _sapp_x11_colormap;
+    wa.border_pixel = 0;
+    wa.event_mask = StructureNotifyMask | KeyPressMask | KeyReleaseMask |
+                    PointerMotionMask | ButtonPressMask | ButtonReleaseMask |
+                    ExposureMask | FocusChangeMask | VisibilityChangeMask |
+                    EnterWindowMask | LeaveWindowMask | PropertyChangeMask;
+    _sapp_x11_grab_error_handler();
+    _sapp_x11_window = XCreateWindow(_sapp_x11_display,
+                                     _sapp_x11_root,
+                                     0, 0,
+                                     _sapp.window_width,
+                                     _sapp.window_height,
+                                     0,     /* border width */
+                                     depth, /* color depth */
+                                     InputOutput,
+                                     visual,
+                                     wamask,
+                                     &wa);
+    _sapp_x11_release_error_handler();
+    if (!_sapp_x11_window) {
+        _sapp_fail("X11: Failed to create window");
+    }
+
+    Atom protocols[] = {
+        _sapp_x11_WM_DELETE_WINDOW
+    };
+    XSetWMProtocols(_sapp_x11_display, _sapp_x11_window, protocols, 1);
+
+    XSizeHints* hints = XAllocSizeHints();
+    hints->flags |= PWinGravity;
+    hints->win_gravity = StaticGravity;
+    XSetWMNormalHints(_sapp_x11_display, _sapp_x11_window, hints);
+    XFree(hints);
+
+    _sapp_x11_update_window_title();
+    _sapp_x11_query_window_size();
+}
+
+_SOKOL_PRIVATE void _sapp_x11_destroy_window(void) {
+    if (_sapp_x11_window) {
+        XUnmapWindow(_sapp_x11_display, _sapp_x11_window);
+        XDestroyWindow(_sapp_x11_display, _sapp_x11_window);
+        _sapp_x11_window = 0;
+    }
+    if (_sapp_x11_colormap) {
+        XFreeColormap(_sapp_x11_display, _sapp_x11_colormap);
+        _sapp_x11_colormap = 0;
+    }
+    XFlush(_sapp_x11_display);
+}
+
+_SOKOL_PRIVATE bool _sapp_x11_window_visible(void) {
+    XWindowAttributes wa;
+    XGetWindowAttributes(_sapp_x11_display, _sapp_x11_window, &wa);
+    return wa.map_state == IsViewable;
+}
+
+_SOKOL_PRIVATE void _sapp_x11_show_window(void) {
+    if (!_sapp_x11_window_visible()) {
+        XMapWindow(_sapp_x11_display, _sapp_x11_window);
+        XRaiseWindow(_sapp_x11_display, _sapp_x11_window);
+        XFlush(_sapp_x11_display);
+    }
+}
+
+_SOKOL_PRIVATE void _sapp_x11_hide_window(void) {
+    XUnmapWindow(_sapp_x11_display, _sapp_x11_window);
+    XFlush(_sapp_x11_display);
+}
+
+_SOKOL_PRIVATE uint32_t _sapp_x11_mod(int x11_mods) {
+    uint32_t mods = 0;
+    if (x11_mods & ShiftMask) {
+        mods |= SAPP_MODIFIER_SHIFT;
+    }
+    if (x11_mods & ControlMask) {
+        mods |= SAPP_MODIFIER_CTRL;
+    }
+    if (x11_mods & Mod1Mask) {
+        mods |= SAPP_MODIFIER_ALT;
+    }
+    if (x11_mods & Mod4Mask) {
+        mods |= SAPP_MODIFIER_SUPER;
+    }
+    return mods;
+}
+
+_SOKOL_PRIVATE sapp_mousebutton _sapp_x11_translate_button(const XEvent* event) {
+    switch (event->xbutton.button) {
+        case Button1: return SAPP_MOUSEBUTTON_LEFT;
+        case Button2: return SAPP_MOUSEBUTTON_MIDDLE;
+        case Button3: return SAPP_MOUSEBUTTON_RIGHT;
+        default:      return SAPP_MOUSEBUTTON_INVALID;
+    }
+}
+
+_SOKOL_PRIVATE void _sapp_x11_mouse_event(sapp_event_type type, sapp_mousebutton btn, uint32_t mods) {
+    if (_sapp_events_enabled()) {
+        _sapp_init_event(type);
+        _sapp.event.mouse_button = btn;
+        _sapp.event.modifiers = mods;
+        _sapp.event.mouse_x = _sapp.mouse_x;
+        _sapp.event.mouse_y = _sapp.mouse_y;
+        _sapp.desc.event_cb(&_sapp.event);
+    }
+}
+
+_SOKOL_PRIVATE void _sapp_x11_scroll_event(float x, float y, uint32_t mods) {
+    if (_sapp_events_enabled()) {
+        _sapp_init_event(SAPP_EVENTTYPE_MOUSE_SCROLL);
+        _sapp.event.modifiers = mods;
+        _sapp.event.scroll_x = x;
+        _sapp.event.scroll_y = y;
+        _sapp.desc.event_cb(&_sapp.event);
+    }
+}
+
+_SOKOL_PRIVATE void _sapp_x11_key_event(sapp_event_type type, sapp_keycode key, uint32_t mods) {
+    if (_sapp_events_enabled()) {
+        _sapp_init_event(type);
+        _sapp.event.key_code = key;
+        _sapp.event.modifiers = mods;
+        _sapp.desc.event_cb(&_sapp.event);
+    }
+}
+
+_SOKOL_PRIVATE void _sapp_x11_char_event(uint32_t chr, uint32_t mods) {
+    if (_sapp_events_enabled()) {
+        _sapp_init_event(SAPP_EVENTTYPE_CHAR);
+        _sapp.event.char_code = chr;
+        _sapp.event.modifiers = mods;
+        _sapp.desc.event_cb(&_sapp.event);
+    }
+}
+
+_SOKOL_PRIVATE sapp_keycode _sapp_x11_translate_key(int scancode) {
+    int dummy;
+    KeySym* keysyms = XGetKeyboardMapping(_sapp_x11_display, scancode, 1, &dummy);
+    SOKOL_ASSERT(keysyms);
+    KeySym keysym = keysyms[0];
+    XFree(keysyms);
+    switch (keysym) {
+        case XK_Escape:         return SAPP_KEYCODE_ESCAPE;
+        case XK_Tab:            return SAPP_KEYCODE_TAB;
+        case XK_Shift_L:        return SAPP_KEYCODE_LEFT_SHIFT;
+        case XK_Shift_R:        return SAPP_KEYCODE_RIGHT_SHIFT;
+        case XK_Control_L:      return SAPP_KEYCODE_LEFT_CONTROL;
+        case XK_Control_R:      return SAPP_KEYCODE_RIGHT_CONTROL;
+        case XK_Meta_L:
+        case XK_Alt_L:          return SAPP_KEYCODE_LEFT_ALT;
+        case XK_Mode_switch:    /* Mapped to Alt_R on many keyboards */
+        case XK_ISO_Level3_Shift: /* AltGr on at least some machines */
+        case XK_Meta_R:
+        case XK_Alt_R:          return SAPP_KEYCODE_RIGHT_ALT;
+        case XK_Super_L:        return SAPP_KEYCODE_LEFT_SUPER;
+        case XK_Super_R:        return SAPP_KEYCODE_RIGHT_SUPER;
+        case XK_Menu:           return SAPP_KEYCODE_MENU;
+        case XK_Num_Lock:       return SAPP_KEYCODE_NUM_LOCK;
+        case XK_Caps_Lock:      return SAPP_KEYCODE_CAPS_LOCK;
+        case XK_Print:          return SAPP_KEYCODE_PRINT_SCREEN;
+        case XK_Scroll_Lock:    return SAPP_KEYCODE_SCROLL_LOCK;
+        case XK_Pause:          return SAPP_KEYCODE_PAUSE;
+        case XK_Delete:         return SAPP_KEYCODE_DELETE;
+        case XK_BackSpace:      return SAPP_KEYCODE_BACKSPACE;
+        case XK_Return:         return SAPP_KEYCODE_ENTER;
+        case XK_Home:           return SAPP_KEYCODE_HOME;
+        case XK_End:            return SAPP_KEYCODE_END;
+        case XK_Page_Up:        return SAPP_KEYCODE_PAGE_UP;
+        case XK_Page_Down:      return SAPP_KEYCODE_PAGE_DOWN;
+        case XK_Insert:         return SAPP_KEYCODE_INSERT;
+        case XK_Left:           return SAPP_KEYCODE_LEFT;
+        case XK_Right:          return SAPP_KEYCODE_RIGHT;
+        case XK_Down:           return SAPP_KEYCODE_DOWN;
+        case XK_Up:             return SAPP_KEYCODE_UP;
+        case XK_F1:             return SAPP_KEYCODE_F1;
+        case XK_F2:             return SAPP_KEYCODE_F2;
+        case XK_F3:             return SAPP_KEYCODE_F3;
+        case XK_F4:             return SAPP_KEYCODE_F4;
+        case XK_F5:             return SAPP_KEYCODE_F5;
+        case XK_F6:             return SAPP_KEYCODE_F6;
+        case XK_F7:             return SAPP_KEYCODE_F7;
+        case XK_F8:             return SAPP_KEYCODE_F8;
+        case XK_F9:             return SAPP_KEYCODE_F9;
+        case XK_F10:            return SAPP_KEYCODE_F10;
+        case XK_F11:            return SAPP_KEYCODE_F11;
+        case XK_F12:            return SAPP_KEYCODE_F12;
+        case XK_F13:            return SAPP_KEYCODE_F13;
+        case XK_F14:            return SAPP_KEYCODE_F14;
+        case XK_F15:            return SAPP_KEYCODE_F15;
+        case XK_F16:            return SAPP_KEYCODE_F16;
+        case XK_F17:            return SAPP_KEYCODE_F17;
+        case XK_F18:            return SAPP_KEYCODE_F18;
+        case XK_F19:            return SAPP_KEYCODE_F19;
+        case XK_F20:            return SAPP_KEYCODE_F20;
+        case XK_F21:            return SAPP_KEYCODE_F21;
+        case XK_F22:            return SAPP_KEYCODE_F22;
+        case XK_F23:            return SAPP_KEYCODE_F23;
+        case XK_F24:            return SAPP_KEYCODE_F24;
+        case XK_F25:            return SAPP_KEYCODE_F25;
+
+        case XK_KP_Divide:      return SAPP_KEYCODE_KP_DIVIDE;
+        case XK_KP_Multiply:    return SAPP_KEYCODE_KP_MULTIPLY;
+        case XK_KP_Subtract:    return SAPP_KEYCODE_KP_SUBTRACT;
+        case XK_KP_Add:         return SAPP_KEYCODE_KP_ADD;
+
+        case XK_KP_Insert:      return SAPP_KEYCODE_KP_0;
+        case XK_KP_End:         return SAPP_KEYCODE_KP_1;
+        case XK_KP_Down:        return SAPP_KEYCODE_KP_2;
+        case XK_KP_Page_Down:   return SAPP_KEYCODE_KP_3;
+        case XK_KP_Left:        return SAPP_KEYCODE_KP_4;
+        case XK_KP_Right:       return SAPP_KEYCODE_KP_6;
+        case XK_KP_Home:        return SAPP_KEYCODE_KP_7;
+        case XK_KP_Up:          return SAPP_KEYCODE_KP_8;
+        case XK_KP_Page_Up:     return SAPP_KEYCODE_KP_9;
+        case XK_KP_Delete:      return SAPP_KEYCODE_KP_DECIMAL;
+        case XK_KP_Equal:       return SAPP_KEYCODE_KP_EQUAL;
+        case XK_KP_Enter:       return SAPP_KEYCODE_KP_ENTER;
+
+        case XK_a:              return SAPP_KEYCODE_A;
+        case XK_b:              return SAPP_KEYCODE_B;
+        case XK_c:              return SAPP_KEYCODE_C;
+        case XK_d:              return SAPP_KEYCODE_D;
+        case XK_e:              return SAPP_KEYCODE_E;
+        case XK_f:              return SAPP_KEYCODE_F;
+        case XK_g:              return SAPP_KEYCODE_G;
+        case XK_h:              return SAPP_KEYCODE_H;
+        case XK_i:              return SAPP_KEYCODE_I;
+        case XK_j:              return SAPP_KEYCODE_J;
+        case XK_k:              return SAPP_KEYCODE_K;
+        case XK_l:              return SAPP_KEYCODE_L;
+        case XK_m:              return SAPP_KEYCODE_M;
+        case XK_n:              return SAPP_KEYCODE_N;
+        case XK_o:              return SAPP_KEYCODE_O;
+        case XK_p:              return SAPP_KEYCODE_P;
+        case XK_q:              return SAPP_KEYCODE_Q;
+        case XK_r:              return SAPP_KEYCODE_R;
+        case XK_s:              return SAPP_KEYCODE_S;
+        case XK_t:              return SAPP_KEYCODE_T;
+        case XK_u:              return SAPP_KEYCODE_U;
+        case XK_v:              return SAPP_KEYCODE_V;
+        case XK_w:              return SAPP_KEYCODE_W;
+        case XK_x:              return SAPP_KEYCODE_X;
+        case XK_y:              return SAPP_KEYCODE_Y;
+        case XK_z:              return SAPP_KEYCODE_Z;
+        case XK_1:              return SAPP_KEYCODE_1;
+        case XK_2:              return SAPP_KEYCODE_2;
+        case XK_3:              return SAPP_KEYCODE_3;
+        case XK_4:              return SAPP_KEYCODE_4;
+        case XK_5:              return SAPP_KEYCODE_5;
+        case XK_6:              return SAPP_KEYCODE_6;
+        case XK_7:              return SAPP_KEYCODE_7;
+        case XK_8:              return SAPP_KEYCODE_8;
+        case XK_9:              return SAPP_KEYCODE_9;
+        case XK_0:              return SAPP_KEYCODE_0;
+        case XK_space:          return SAPP_KEYCODE_SPACE;
+        case XK_minus:          return SAPP_KEYCODE_MINUS;
+        case XK_equal:          return SAPP_KEYCODE_EQUAL;
+        case XK_bracketleft:    return SAPP_KEYCODE_LEFT_BRACKET;
+        case XK_bracketright:   return SAPP_KEYCODE_RIGHT_BRACKET;
+        case XK_backslash:      return SAPP_KEYCODE_BACKSLASH;
+        case XK_semicolon:      return SAPP_KEYCODE_SEMICOLON;
+        case XK_apostrophe:     return SAPP_KEYCODE_APOSTROPHE;
+        case XK_grave:          return SAPP_KEYCODE_GRAVE_ACCENT;
+        case XK_comma:          return SAPP_KEYCODE_COMMA;
+        case XK_period:         return SAPP_KEYCODE_PERIOD;
+        case XK_slash:          return SAPP_KEYCODE_SLASH;
+        case XK_less:           return SAPP_KEYCODE_WORLD_1; /* At least in some layouts... */
+        default:                return SAPP_KEYCODE_INVALID;
+    }
+}
+
+_SOKOL_PRIVATE int32_t _sapp_x11_keysym_to_unicode(KeySym keysym) {
+    int min = 0;
+    int max = sizeof(_sapp_x11_keysymtab) / sizeof(struct _sapp_x11_codepair) - 1;
+    int mid;
+
+    /* First check for Latin-1 characters (1:1 mapping) */
+    if ((keysym >= 0x0020 && keysym <= 0x007e) ||
+        (keysym >= 0x00a0 && keysym <= 0x00ff))
+    {
+        return keysym;
+    }
+
+    /* Also check for directly encoded 24-bit UCS characters */
+    if ((keysym & 0xff000000) == 0x01000000) {
+        return keysym & 0x00ffffff;
+    }
+
+    /* Binary search in table */
+    while (max >= min) {
+        mid = (min + max) / 2;
+        if (_sapp_x11_keysymtab[mid].keysym < keysym) {
+            min = mid + 1;
+        }
+        else if (_sapp_x11_keysymtab[mid].keysym > keysym) {
+            max = mid - 1;
+        }
+        else {
+            return _sapp_x11_keysymtab[mid].ucs;
+        }
+    }
+
+    /* No matching Unicode value found */
+    return -1;
+}
+
+_SOKOL_PRIVATE void _sapp_x11_process_event(XEvent* event) {
+    switch (event->type) {
+        case KeyPress: 
+            {
+                const sapp_keycode key = _sapp_x11_translate_key(event->xkey.keycode);
+                const uint32_t mods = _sapp_x11_mod(event->xkey.state);
+                if (key != SAPP_KEYCODE_INVALID) {
+                    _sapp_x11_key_event(SAPP_EVENTTYPE_KEY_DOWN, key, mods);
+                }
+                KeySym keysym;
+                XLookupString(&event->xkey, NULL, 0, &keysym, NULL);
+                int32_t chr = _sapp_x11_keysym_to_unicode(keysym);
+                if (chr > 0) {
+                    _sapp_x11_char_event((uint32_t)chr, mods);
+                }
+            }
+            break;
+        case KeyRelease: 
+            {
+                const sapp_keycode key = _sapp_x11_translate_key(event->xkey.keycode);
+                if (key != SAPP_KEYCODE_INVALID) {
+                    const uint32_t mods = _sapp_x11_mod(event->xkey.state);
+                    _sapp_x11_key_event(SAPP_EVENTTYPE_KEY_UP, key, mods);
+                }
+            }
+            break;
+        case ButtonPress:
+            {
+                const sapp_mousebutton btn = _sapp_x11_translate_button(event);
+                const uint32_t mods = _sapp_x11_mod(event->xbutton.state);
+                if (btn != SAPP_MOUSEBUTTON_INVALID) {
+                    _sapp_x11_mouse_event(SAPP_EVENTTYPE_MOUSE_DOWN, btn, mods);
+                }
+                else {
+                    /* might be a scroll event */
+                    switch (event->xbutton.button) {
+                        case 4: _sapp_x11_scroll_event(0.0f, 1.0f, mods); break;
+                        case 5: _sapp_x11_scroll_event(0.0f, -1.0f, mods); break;
+                        case 6: _sapp_x11_scroll_event(1.0f, 0.0f, mods); break;
+                        case 7: _sapp_x11_scroll_event(-1.0f, 0.0f, mods); break;
+                    }
+                }
+            }
+            break;
+        case ButtonRelease:
+            {
+                const sapp_mousebutton btn = _sapp_x11_translate_button(event);
+                if (btn != SAPP_MOUSEBUTTON_INVALID) {
+                    _sapp_x11_mouse_event(SAPP_EVENTTYPE_MOUSE_UP, btn, _sapp_x11_mod(event->xbutton.state));
+                }
+            }
+            break;
+        case EnterNotify:
+            _sapp_x11_mouse_event(SAPP_EVENTTYPE_MOUSE_ENTER, SAPP_MOUSEBUTTON_INVALID, _sapp_x11_mod(event->xcrossing.state)); 
+            break;
+        case LeaveNotify:
+            _sapp_x11_mouse_event(SAPP_EVENTTYPE_MOUSE_LEAVE, SAPP_MOUSEBUTTON_INVALID, _sapp_x11_mod(event->xcrossing.state));
+            break;
+        case MotionNotify:
+            _sapp.mouse_x = event->xmotion.x;
+            _sapp.mouse_y = event->xmotion.y;
+            _sapp_x11_mouse_event(SAPP_EVENTTYPE_MOUSE_MOVE, SAPP_MOUSEBUTTON_INVALID, _sapp_x11_mod(event->xmotion.state));
+            break;
+        case ConfigureNotify:
+            _sapp.window_width = event->xconfigure.width;
+            _sapp.window_height = event->xconfigure.height;
+            _sapp.framebuffer_width = _sapp.window_width;
+            _sapp.framebuffer_height = _sapp.window_height;
+            break;
+        case ClientMessage:
+            if (event->xclient.message_type == _sapp_x11_WM_PROTOCOLS) {
+                const Atom protocol = event->xclient.data.l[0];
+                if (protocol == _sapp_x11_WM_DELETE_WINDOW) {
+                    _sapp_x11_quit_requested = true;
+                }
+            }
+            break;
+        case DestroyNotify:
+            break;
+    }
+}
 
 int main(int argc, char* argv[]) {
     sapp_desc desc = sokol_main(argc, argv);
     _sapp_init_state(&desc, argc, argv);
+    _sapp_x11_quit_requested = false;
 
     XInitThreads();
     XrmInitialize();
@@ -3194,16 +5133,33 @@ int main(int argc, char* argv[]) {
     }
     _sapp_x11_screen = DefaultScreen(_sapp_x11_display);
     _sapp_x11_root = DefaultRootWindow(_sapp_x11_display);
-    _sapp_x11_context = XUniqueContext();
     _sapp_x11_query_system_dpi();
     _sapp.dpi_scale = _sapp_x11_dpi / 96.0f; 
-
-    // FIXME: query extensions
-
+    _sapp_x11_init_extensions();
     _sapp_glx_init();
-
-
-
+    Visual* visual = 0;
+    int depth = 0;
+    _sapp_glx_choose_visual(&visual, &depth);
+    _sapp_x11_create_window(visual, depth);
+    _sapp_glx_create_context();
+    _sapp.valid = true;
+    _sapp_glx_swapinterval(1);
+    _sapp_x11_show_window();
+    XFlush(_sapp_x11_display);
+    while (!_sapp_x11_quit_requested) {
+        _sapp_glx_make_current();
+        int count = XPending(_sapp_x11_display);
+        while (count--) {
+            XEvent event;
+            XNextEvent(_sapp_x11_display, &event);
+            _sapp_x11_process_event(&event);
+        }
+        _sapp_frame();
+        _sapp_glx_swap_buffers();
+        XFlush(_sapp_x11_display);
+    }
+    _sapp_glx_destroy_context();
+    _sapp_x11_destroy_window();
     XCloseDisplay(_sapp_x11_display);
     return 0;
 }
@@ -3233,6 +5189,18 @@ float sapp_dpi_scale(void) {
 
 bool sapp_gles2(void) {
     return _sapp.gles2_fallback;
+}
+
+void sapp_show_keyboard(bool shown) {
+    #if TARGET_OS_IPHONE
+    _sapp_ios_show_keyboard(shown);
+    #elif __EMSCRIPTEN__
+    _sapp_emsc_show_keyboard(shown);
+    #endif
+}
+
+bool sapp_keyboard_shown(void) {
+    return _sapp.onscreen_keyboard_shown;
 }
 
 const void* sapp_metal_get_device(void) {
