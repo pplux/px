@@ -381,6 +381,17 @@ namespace px_render {
     DisplayList();
     ~DisplayList();
 
+    DisplayList(const DisplayList &d) = delete;
+    DisplayList(DisplayList &&d) {
+      data_ = d.data_;
+      d.data_ = nullptr;
+    }
+    DisplayList& operator=(const DisplayList&) = delete;
+    DisplayList& operator=(DisplayList &&d) {
+      data_ = d.data_;
+      d.data_ = nullptr;
+    }
+
     // Helper macro to define properties... yeah, ugly but 
     // convenient.
     #define PROP(type, name, ...) \
@@ -421,6 +432,7 @@ namespace px_render {
       PROP(Pipeline, pipeline, {});
       PROP_ARRAY(Texture, kMaxTextureUnits, texture);
       PROP_ARRAY(Buffer, kMaxVertexAttribs, buffer);
+      PROP(Vec4, scissor, {});
       PROP(Mat4, model_matrix, Mat4::Identity());
       PROP_PTR(uint8_t, uniforms);
     };
@@ -530,6 +542,14 @@ namespace px_render {
     Buffer createBuffer(const Buffer::Info &info);
     Pipeline createPipeline(const Pipeline::Info &info);
     Framebuffer createFramebuffer(const Framebuffer::Info &info);
+
+    // submits a display list, stealing all of its content, and resetting the
+    // object to a default initial state.
+    void submitDisplayList(DisplayList *dl);
+
+    // submits a display list, stealing all of its content, and resetting the
+    // object to a default initial state. It also issues a FrameSwap.
+    void submitDisplayListAndSwap(DisplayList *dl);
 
     void submitDisplayList(DisplayList &&dl);
     void submitDisplayListAndSwap(DisplayList &&dl);
@@ -1129,6 +1149,7 @@ namespace px_render {
   static void DestroyBackEndResource(RenderContext::Data *ctx, const GPUResource::Type::Enum type, uint32_t pos);
 
   static void Execute(RenderContext::Data *ctx, const DestroyCommand &dc) {
+    if (dc.resource.ctx == nullptr && dc.resource.id == 0) return; // invalid resource nothing needs to be done
     if (ctx != dc.resource.ctx->data_ ) OnError(ctx, "RenderContext mismatch");
 
     uint32_t pos = IDToIndex(dc.resource.id);
@@ -1521,27 +1542,28 @@ namespace px_render {
   #define GLCHECK_STR(A) GLCHECK_STR_STR(A)
   #define GLCHECK(...) {__VA_ARGS__; CheckGLError(ctx, __FILE__  ":" GLCHECK_STR(__LINE__) "-->" #__VA_ARGS__);}
 
-  static void Execute(RenderContext::Data *,const DisplayList::ClearData &d, const Mem<uint8_t>*) {
+  static void Execute(RenderContext::Data *ctx,const DisplayList::ClearData &d, const Mem<uint8_t>*) {
+    
     uint32_t mask = 0;
     if (d.clear_color) {
-      glClearColor(
+      GLCHECK(glClearColor(
         d.color.c.r,
         d.color.c.g,
         d.color.c.b,
-        d.color.c.a);
+        d.color.c.a));
       mask |= GL_COLOR_BUFFER_BIT;
     }
     if (d.clear_depth) {
-      glClearDepth(d.depth);
+      GLCHECK(glClearDepth(d.depth));
       mask |= GL_DEPTH_BUFFER_BIT;
     }
     if (d.clear_stencil) {
-      glClearStencil(d.stencil);
+      GLCHECK(glClearStencil(d.stencil));
       mask |= GL_STENCIL_BUFFER_BIT;
     }
-    glClear(mask);
+    GLCHECK(glClear(mask));
   }
-
+  
   static uint32_t CompileShader(RenderContext::Data *ctx, GLenum type, const char *src) {
     uint32_t shader = glCreateShader(type);
     if (!shader) {
@@ -1883,6 +1905,7 @@ namespace px_render {
     if (d.viewport.width != 0 && d.viewport.height != 0) {
       GLCHECK(glViewport(d.viewport.x, d.viewport.y, d.viewport.width, d.viewport.height));
     }
+    GLCHECK(glDisable(GL_SCISSOR_TEST));
     ctx->view_matrix = d.view_matrix;
     ctx->projection_matrix = d.projection_matrix;
     ctx->inv_view_matrix_computed = false;
@@ -2004,7 +2027,6 @@ namespace px_render {
           GLCHECK(glDisableVertexAttribArray(i));
         }
       }
-
     }
     return pi;
   }
@@ -2088,6 +2110,13 @@ namespace px_render {
         break;
       }
     }
+
+    if (d.scissor.f[2] > 0.0f && d.scissor.f[3] > 0.0f) {
+      GLCHECK(glScissor(d.scissor.f[0], d.scissor.f[1], d.scissor.f[2], d.scissor.f[3]));
+      GLCHECK(glEnable(GL_SCISSOR_TEST));
+    } else {
+      GLCHECK(glDisable(GL_SCISSOR_TEST));
+    }
   }
 
   void DestroyBackEndResource(RenderContext::Data *ctx, const GPUResource::Type::Enum type, uint32_t pos) {
@@ -2098,15 +2127,18 @@ namespace px_render {
         break;
       case GPUResource::Type::Buffer:
         GLCHECK(glDeleteBuffers(1, &b->buffers[pos].buffer));
+        b->buffers[pos].buffer = 0;
         break;
       case GPUResource::Type::Pipeline:
         GLCHECK(glDeleteProgram(b->pipelines[pos].program));
         break;
       case GPUResource::Type::Texture:
         GLCHECK(glDeleteTextures(1, &b->textures[pos].texture));
+        b->textures[pos].texture = 0;
         break;
       case GPUResource::Type::Framebuffer:
         GLCHECK(glDeleteFramebuffers(1, &b->framebuffers[pos].framebuffer));
+        b->framebuffers[pos].framebuffer = 0;
 
         break;
     }
