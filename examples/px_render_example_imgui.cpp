@@ -26,202 +26,17 @@
 #include "deps/imgui.h"
 #include "deps/imgui.cpp"
 #include "deps/imgui_draw.cpp"
+#include "deps/imgui_impl_pxrender.h"
+#include "deps/imgui_impl_pxrender.cpp"
 // demo
 #include "deps/imgui_demo.cpp"
 
-namespace px_render {
-  class ImGui {
-  public:
-    void init(RenderContext *ctx);
-    void finish();
-    void beginFrame(uint16_t window_width, uint16_t window_height);
-    DisplayList endFrame();
-
-    ~ImGui() {
-      assert(ctx_ == nullptr && imgui_ctx_ == nullptr && "destroy() not called");
-    }
-
-  private: 
-    RenderContext *ctx_ = nullptr;
-    ImGuiContext *imgui_ctx_ = nullptr;
-    Pipeline pipeline_;
-    Texture font_;
-    Buffer vertex_;
-    Buffer index_;
-    uint32_t vertex_size_ = 0;
-    uint32_t index_size_ = 0;
-  };
-}
-
-namespace px_render {
-
-  void ImGui::init(RenderContext *_ctx) {
-    assert(ctx_ == nullptr && imgui_ctx_ == nullptr && "init() called twice");
-    ctx_ = _ctx;
-    imgui_ctx_ = ::ImGui::CreateContext();
-
-    // -- Create Pipeline Object ---------------------------------------------
-    px_render::Pipeline::Info pinfo;
-    #define GLSL(...) "#version 330\n" #__VA_ARGS__
-    pinfo.shader.vertex = GLSL(
-      uniform mat4 u_projection;
-      in vec2 pos;
-      in vec2 uv;
-      in vec4 color;
-      out vec2 frag_uv;
-      out vec4 frag_color;
-      void main() {
-        frag_uv = uv;
-        frag_color = color;
-        gl_Position = u_projection*vec4(pos, 0.0, 1.0);
-      } 
-    );
-    pinfo.shader.fragment = GLSL(
-      uniform sampler2D u_tex0;
-      in vec2 frag_uv;
-      in vec4 frag_color;
-      out vec4 color;
-      void main() {
-        color = vec4(frag_color.rgb, texture(u_tex0, frag_uv).r*frag_color.a);
-      }
-    );
-    #undef GLSL
-    pinfo.attribs[0] = {"pos", VertexFormat::Float2};
-    pinfo.attribs[1] = {"uv", VertexFormat::Float2};
-    pinfo.attribs[2] = {"color", VertexFormat::UInt8 | VertexFormat::NumComponents4 | VertexFormat::Normalized};
-    pinfo.textures[0] = TextureType::T2D;
-    pinfo.blend.enabled = true;
-    pinfo.blend.op_rgb = pinfo.blend.op_alpha = BlendOp::Add;
-    pinfo.blend.src_rgb = pinfo.blend.src_alpha = BlendFactor::SrcAlpha;
-    pinfo.blend.dst_rgb = pinfo.blend.dst_alpha = BlendFactor::OneMinusSrcAlpha;
-    pinfo.cull = Cull::Disabled;
-    pinfo.depth_func = CompareFunc::Always;
-    pinfo.depth_write = false;
-    pipeline_ = ctx_->createPipeline(pinfo);
-
-    // -- Default font texture -----------------------------------------------
-    int font_width, font_height;
-    unsigned char *font_pixels;
-    ::ImGui::GetIO().Fonts->GetTexDataAsAlpha8(&font_pixels, &font_width, &font_height);
-    Texture::Info tinfo;
-    tinfo.width = font_width;
-    tinfo.height = font_height;
-    tinfo.format = TexelsFormat::R_U8;
-    font_ = ctx_->createTexture(tinfo);
-    DisplayList tex_dl;
-    tex_dl.fillTextureCommand()
-      .set_texture(font_)
-      .set_data(font_pixels);
-    ctx_->submitDisplayList(std::move(tex_dl));
-    ::ImGui::GetIO().Fonts->TexID = (void*)&font_;
-
-  }
-
-  void ImGui::finish() {
-    ::ImGui::DestroyContext(imgui_ctx_);
-    imgui_ctx_ = nullptr;
-    ctx_ = nullptr;
-  }
-
-  void ImGui::beginFrame(uint16_t window_width, uint16_t window_height) {
-    ::ImGui::SetCurrentContext(imgui_ctx_);
-    ::ImGui::GetIO().DisplaySize = {(float)window_width, (float)window_height};
-    ::ImGui::NewFrame();
-  }
-
-  DisplayList ImGui::endFrame() {
-    DisplayList dl;
-    ::ImGui::Render();
-    ImDrawData* draw_data = ::ImGui::GetDrawData();
-    ImGuiIO& io = ::ImGui::GetIO();
-
-    int fb_width = (int)(draw_data->DisplaySize.x * io.DisplayFramebufferScale.x);
-    int fb_height = (int)(draw_data->DisplaySize.y * io.DisplayFramebufferScale.y);
-    if (fb_width <= 0 || fb_height <= 0) return dl;
-    draw_data->ScaleClipRects(io.DisplayFramebufferScale);
-
-    float L = draw_data->DisplayPos.x;
-    float R = draw_data->DisplayPos.x + draw_data->DisplaySize.x;
-    float T = draw_data->DisplayPos.y;
-    float B = draw_data->DisplayPos.y + draw_data->DisplaySize.y;
-    const px_render::Mat4 proj =
-    {
-       2.0f/(R-L),   0.0f,         0.0f,   0.0f ,
-       0.0f,         2.0f/(T-B),   0.0f,   0.0f ,
-       0.0f,         0.0f,        -1.0f,   0.0f ,
-       (R+L)/(L-R),  (T+B)/(B-T),  0.0f,   1.0f 
-    };
-    dl.setupViewCommand()
-      .set_projection_matrix(proj)
-      .set_viewport({0,0, (uint16_t) fb_width, (uint16_t) fb_height});
-      ;
-    
-    ImVec2 pos = draw_data->DisplayPos;
-
-    for(int n = 0; n < draw_data->CmdListsCount; ++n) {
-      const ImDrawList *cmd_list = draw_data->CmdLists[n];
-      size_t required_vertex_size = cmd_list->VtxBuffer.Size * sizeof(ImDrawVert);
-      if (required_vertex_size > vertex_size_) {
-        dl.destroy(vertex_);
-        vertex_ = ctx_->createBuffer({BufferType::Vertex, required_vertex_size, Usage::Stream});
-        vertex_size_ = required_vertex_size;
-      }
-      dl.fillBufferCommand()
-        .set_buffer(vertex_)
-        .set_data(cmd_list->VtxBuffer.Data)
-        .set_size(required_vertex_size)
-        ;
-      size_t required_index_size = cmd_list->IdxBuffer.Size *sizeof(ImDrawIdx);
-      if (required_index_size > index_size_) {
-        dl.destroy(index_);
-        index_ = ctx_->createBuffer({BufferType::Index, required_index_size, Usage::Stream});
-        index_size_ = required_index_size;
-      }
-      dl.fillBufferCommand()
-        .set_buffer(index_)
-        .set_data(cmd_list->IdxBuffer.Data)
-        .set_size(required_index_size)
-        ;
-      uint32_t idx_buffer_offset = 0;
-      for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; ++cmd_i) {
-        const ImDrawCmd *cmd = &cmd_list->CmdBuffer[cmd_i];
-        if (cmd->UserCallback) {
-          cmd->UserCallback(cmd_list, cmd);
-          continue;
-        }
-      
-       Vec4 clip_rect = { cmd->ClipRect.x - pos.x, cmd->ClipRect.y - pos.y, cmd->ClipRect.z - pos.x, cmd->ClipRect.w - pos.y};
-       if (clip_rect.v.x < fb_width && clip_rect.v.y < fb_height && clip_rect.v.z >= 0.0f && clip_rect.v.w >= 0.0f) {
-        // invert y on scissor
-         Vec4 scissor_rect = { clip_rect.f[0], fb_height - clip_rect.f[3], clip_rect.f[2] - clip_rect.f[0], clip_rect.f[3] - clip_rect.f[1]};
-         dl.setupPipelineCommand()
-          .set_pipeline(pipeline_)
-          .set_buffer(0, vertex_)
-          .set_texture(0, *(Texture*)cmd->TextureId)
-          .set_scissor(scissor_rect)
-          ;
-         dl.renderCommand()
-          .set_index_buffer(index_)
-          .set_offset(sizeof(ImDrawIdx)*idx_buffer_offset)
-          .set_count(cmd->ElemCount)
-          .set_type(IndexFormat::UInt16)
-          ;
-         idx_buffer_offset += cmd->ElemCount;
-       }
-      }
-      
-    }
-
-    return dl;
-  }
-
-}
 
 struct {
   px_render::RenderContext ctx;
-  px_render::ImGui gui;
   px_sched::Scheduler sched;
   px_sched::Sync frame;
+  ImGuiContext *imgui_ctx = nullptr;
   bool btn_down[SAPP_MAX_MOUSEBUTTONS];
   bool btn_up[SAPP_MAX_MOUSEBUTTONS];
 } State;
@@ -257,7 +72,8 @@ void init() {
     gladLoadGL();
   #endif
   State.ctx.init();
-  State.gui.init(&State.ctx);
+  State.imgui_ctx = ImGui::CreateContext();
+  ImGui_Impl_pxrender_Init(&State.ctx);
   setup_input();
 }
 
@@ -275,9 +91,10 @@ void render() {
     .set_clear_depth(true)
     .set_color({0.1f,0.2f,0.1f, 1.0f})
   ;
-  State.ctx.submitDisplayList(std::move(dl));
 
   ImGuiIO &io = ImGui::GetIO();
+  io.DisplaySize = {(float)sapp_width(), (float)sapp_height()};
+
   for (int i = 0; i < SAPP_MAX_MOUSEBUTTONS; i++) {
     if (State.btn_down[i]) {
       State.btn_down[i] = false;
@@ -288,10 +105,13 @@ void render() {
       io.MouseDown[i] = false;
     }
   }
-
-  State.gui.beginFrame(sapp_width(), sapp_height());
+  
+  ImGui::NewFrame();
   gui();
-  State.ctx.submitDisplayListAndSwap(State.gui.endFrame());
+  ImGui::Render();
+
+  ImGui_Impl_pxrender_RenderDrawData(ImGui::GetDrawData(), &dl);
+  State.ctx.submitDisplayListAndSwap(std::move(dl));
 }
 
 void frame() {
@@ -305,12 +125,11 @@ void frame() {
 }
 
 void cleanup() {
-  State.gui.finish();
+  ImGui_Impl_pxrender_Shutdown();
   State.ctx.finish();
 }
 
 void input(const sapp_event* event) {
-
   auto& io = ImGui::GetIO();
   io.KeyAlt = (event->modifiers & SAPP_MODIFIER_ALT) != 0;
   io.KeyCtrl = (event->modifiers & SAPP_MODIFIER_CTRL) != 0;
