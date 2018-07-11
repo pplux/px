@@ -74,8 +74,8 @@ void ImGui_Impl_pxrender_Init(px_render::RenderContext *ctx) {
   pinfo.blend.op_rgb = pinfo.blend.op_alpha = BlendOp::Add;
   pinfo.blend.src_rgb = pinfo.blend.src_alpha = BlendFactor::SrcAlpha;
   pinfo.blend.dst_rgb = pinfo.blend.dst_alpha = BlendFactor::OneMinusSrcAlpha;
-  pinfo.cull = Cull::Disabled;
   pinfo.depth_func = CompareFunc::Always;
+  pinfo.cull = Cull::Disabled;
   pinfo.depth_write = false;
   PRS.pipeline = PRS.ctx->createPipeline(pinfo);
 

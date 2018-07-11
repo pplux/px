@@ -225,6 +225,7 @@ namespace px_render {
 
   struct CompareFunc {
     enum Enum {
+      Disabled,
       Never,
       Less,
       LessEqual,
@@ -743,11 +744,12 @@ namespace px_render {
       sizeof(SetupViewData),
       sizeof(SetupPipelineData),
       sizeof(RenderData),
-      sizeof(FillBufferData)
+      sizeof(FillBufferData),
+      sizeof(FillTextureData),
     });
-    static const size_t kPayloadSizeAligned64 =(kPayloadSize+7)>>3;
+    //static const size_t kPayloadSizeAligned64 =(kPayloadSize+7)>>3;
     Type::Enum type = Type::Invalid;
-    uint64_t data[kPayloadSizeAligned64];
+    uint8_t data[kPayloadSize];
     uint32_t payload_index = (uint32_t)-1;
   };
 
@@ -802,8 +804,8 @@ namespace px_render {
     Mat4 inv_projection_matrix;
     bool inv_projection_matrix_computed = false;
     Mat4 model_matrix;
-    Pipeline last_pipeline = {};
     RenderContextParams params;
+    DisplayList::SetupPipelineData last_pipeline = {};
     // Back end -----------------------------------
     BackEnd *back_end = nullptr;
   };
@@ -1494,6 +1496,8 @@ namespace px_render {
       GLint uniforms_location[kAutomaticUniformCount] = {};
       GLint texture_uniforms_location[kMaxTextureUnits] = {};
       GLint attrib_location[kMaxVertexAttribs] = {};
+
+      bool needs_vertex_buffer_bind = false;
     };
 
     struct Buffer {
@@ -1556,10 +1560,12 @@ namespace px_render {
         d.color.c.b,
         d.color.c.a));
       mask |= GL_COLOR_BUFFER_BIT;
+      GLCHECK(glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE));
     }
     if (d.clear_depth) {
       GLCHECK(glClearDepth(d.depth));
       mask |= GL_DEPTH_BUFFER_BIT;
+      GLCHECK(glDepthMask(GL_TRUE));
     }
     if (d.clear_stencil) {
       GLCHECK(glClearStencil(d.stencil));
@@ -1612,6 +1618,7 @@ namespace px_render {
       case BlendFactor::OneMinusBlendAlpha: return GL_ONE_MINUS_CONSTANT_ALPHA;
     }
     // ERROR!
+    assert(!"Invalid BlendFactor");
     return 0;
   }
 
@@ -1624,6 +1631,7 @@ namespace px_render {
       case BlendOp::Max: return GL_MAX;
     }
     // ERROR!
+    assert(!"Invalid BlendOp");
     return 0;
   }
 
@@ -1634,6 +1642,7 @@ namespace px_render {
       case IndexFormat::UInt32: return GL_UNSIGNED_INT;
     }
     // ERROR!
+    assert(!"Invalid IndexFormat");
     return 0;
   }
 
@@ -1644,6 +1653,7 @@ namespace px_render {
       case Primitive::Points:    return GL_POINTS;
     }
     // ERROR!
+    assert(!"Invalid Primitive");
     return 0;
   }
 
@@ -1654,6 +1664,7 @@ namespace px_render {
       case Usage::Stream:  return GL_STREAM_DRAW;
     }
     // ERROR!
+    assert(!"Invalid Usage");
     return 0;
   }
 
@@ -1669,6 +1680,7 @@ namespace px_render {
       case CompareFunc::Always:       return GL_ALWAYS;
       }
     // ERROR!
+    assert(!"Invalid CompareFunc");
     return 0;
   }
 
@@ -1682,6 +1694,7 @@ namespace px_render {
       case SamplerFiltering::LinearMipmapLinear:   return GL_LINEAR_MIPMAP_LINEAR;
     }
     // ERROR !
+    assert(!"Invalid Sampler Filtering");
     return 0;
   }
 
@@ -1692,6 +1705,7 @@ namespace px_render {
       case SamplerWrapping::Clamp:          return GL_CLAMP_TO_EDGE;
     }
     // ERROR !
+    assert(!"Invalid Sampler Wrapping");
     return 0;
   }
 
@@ -1707,6 +1721,7 @@ namespace px_render {
       case VertexFormat::UInt32: return GL_UNSIGNED_INT; break;
       default:
       // ERROR
+    assert(!"Invalid Vertex Type");
       return 0;
     }
   }
@@ -1722,19 +1737,14 @@ namespace px_render {
     ctx->last_pipeline = {};
   }
 
-
-  static void Execute(RenderContext::Data *ctx, const DisplayList::RenderData &d, const Mem<uint8_t> *payloads) {
-    auto b = GetResource(ctx, d.index_buffer.id, &ctx->buffers, &ctx->back_end->buffers);
-    auto p = GetResource(ctx,ctx->last_pipeline.id, &ctx->pipelines, &ctx->back_end->pipelines);
-    if (!b.second->buffer) OnError(ctx, "Invalid Index buffer...");
-    GLCHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, b.second->buffer));
-    GLCHECK(glDrawElementsInstanced(Translate(p.first->info.primitive), d.count, Translate(d.type), (void*)d.offset, d.instances));
-  }
-  
   static void Execute(RenderContext::Data *ctx, const DisplayList::FillBufferData &d, const Mem<uint8_t> *payloads) {
     auto b = GetResource(ctx, d.buffer.id, &ctx->buffers, &ctx->back_end->buffers);
     GLuint id = b.second->buffer;
     GLenum target = 0;
+    if (d.offset + payloads->count > b.first->info.size) {
+      OnError(ctx, "Invalid Fillbuffer, override. Size %u, offset %u, data_size %u", b.first->info.size, d.offset, payloads->count);
+      return;
+     }
     switch(b.first->info.type) {
       case BufferType::Vertex: target = GL_ARRAY_BUFFER; break;
       case BufferType::Index:  target = GL_ELEMENT_ARRAY_BUFFER; break;
@@ -1742,15 +1752,14 @@ namespace px_render {
     }
     if (!id) {
       GLCHECK(glGenBuffers(1, &id));
-
       GLCHECK(glBindBuffer(target, id));
       GLCHECK(glBufferData(target, b.first->info.size, nullptr, Translate(b.first->info.usage)));
       b.second->buffer = id;
-    } else {
-      GLCHECK(glBindBuffer(target, id));
     }
-
-    if (payloads) GLCHECK(glBufferSubData(target, d.offset, payloads->count, payloads->data.get()));
+    if (payloads) {
+      GLCHECK(glBindBuffer(target, id));
+      GLCHECK(glBufferSubData(target, d.offset, payloads->count, payloads->data.get()));
+    }
   }
 
   static void TextureInitialization(RenderContext::Data *ctx, GLenum target, const Texture::Info &info) {
@@ -1917,66 +1926,65 @@ namespace px_render {
   }
 
 
-  static std::pair<PipelineInstance*, BackEnd::Pipeline*> ChangePipeline(RenderContext::Data *ctx, Pipeline pipeline) {
-    auto pi = GetResource(ctx, pipeline.id, &ctx->pipelines, &ctx->back_end->pipelines);
-    if (pi.second->program == 0) {
-      // initialization
-      for(auto &i:pi.second->uniforms_location) { i = -1; }
-      for(auto &i:pi.second->texture_uniforms_location) { i = -1; }
+  static void ChangePipeline(RenderContext::Data *ctx, const DisplayList::SetupPipelineData &d) {
+    if (d.pipeline.id != ctx->last_pipeline.pipeline.id) {
+      ctx->last_pipeline = d;
+      auto pi = GetResource(ctx, ctx->last_pipeline.pipeline.id, &ctx->pipelines, &ctx->back_end->pipelines);
+      if (pi.second->program == 0) {
+        // initialization
+        for(auto &i:pi.second->uniforms_location) { i = -1; }
+        for(auto &i:pi.second->texture_uniforms_location) { i = -1; }
 
-      uint32_t shader_v = CompileShader(ctx, GL_VERTEX_SHADER,   pi.first->vertex_shader.data.get());
-      uint32_t shader_f = CompileShader(ctx, GL_FRAGMENT_SHADER, pi.first->fragment_shader.data.get());
-      if (!shader_v || !shader_f) {
-        return {nullptr, nullptr};
-      }
-      uint32_t program_id = glCreateProgram();
-      if (!program_id) {
-        OnError(ctx, "Could not create program object");
-        return {nullptr, nullptr};
-      }
-      GLCHECK(glAttachShader(program_id, shader_v));
-      GLCHECK(glAttachShader(program_id, shader_f));
+        uint32_t shader_v = CompileShader(ctx, GL_VERTEX_SHADER,   pi.first->vertex_shader.data.get());
+        uint32_t shader_f = CompileShader(ctx, GL_FRAGMENT_SHADER, pi.first->fragment_shader.data.get());
+        if (!shader_v || !shader_f) {
+          return;
+        }
+        uint32_t program_id = glCreateProgram();
+        if (!program_id) {
+          OnError(ctx, "Could not create program object");
+          return;
+        }
+        GLCHECK(glAttachShader(program_id, shader_v));
+        GLCHECK(glAttachShader(program_id, shader_f));
 
-      // set attribute positions
-      for (auto i = 0; i < kMaxVertexAttribs; ++i) {
-        const auto &attrib = pi.first->info.attribs[i];
-        if (attrib.format) {
-          GLCHECK(glBindAttribLocation(program_id, i, attrib.name));
-        } else {
-          break;
+        // set attribute positions
+        for (auto i = 0; i < kMaxVertexAttribs; ++i) {
+          const auto &attrib = pi.first->info.attribs[i];
+          if (attrib.format) {
+            GLCHECK(glBindAttribLocation(program_id, i, attrib.name));
+          } else {
+            break;
+          }
+        }
+
+        GLCHECK(glLinkProgram(program_id));
+        int32_t linkStatus = GL_FALSE;
+        GLCHECK(glGetProgramiv(program_id, GL_LINK_STATUS, &linkStatus));
+        if (linkStatus != GL_TRUE) {
+          char log[2048];
+          GLCHECK(glGetProgramInfoLog(program_id, 2048, NULL, log));
+          GLCHECK(glDeleteProgram(program_id));
+          OnError(ctx, "Could not link program --> %s", log);
+          return;
+        }
+        pi.second->program = program_id;
+        GLCHECK(glDeleteShader(shader_v));
+        GLCHECK(glDeleteShader(shader_f));
+
+        // Gather Uniform Info
+        for (auto i = 0; i < kAutomaticUniformCount; ++i) {
+          pi.second->uniforms_location[i] = glGetUniformLocation(program_id, Uniforms[i].name);
+        }
+
+        for (auto i = 0; i < kMaxTextureUnits; ++i) {
+          char name[32];
+          snprintf(name, 32, "u_tex%d", i);
+          if (pi.first->info.textures[i]) {
+            pi.second->texture_uniforms_location[i] = glGetUniformLocation(program_id, name);
+          }
         }
       }
-
-      GLCHECK(glLinkProgram(program_id));
-      int32_t linkStatus = GL_FALSE;
-      GLCHECK(glGetProgramiv(program_id, GL_LINK_STATUS, &linkStatus));
-      if (linkStatus != GL_TRUE) {
-        char log[2048];
-        GLCHECK(glGetProgramInfoLog(program_id, 2048, NULL, log));
-        GLCHECK(glDeleteProgram(program_id));
-        OnError(ctx, "Could not link program --> %s", log);
-        return {nullptr, nullptr};
-      }
-      pi.second->program = program_id;
-      GLCHECK(glDeleteShader(shader_v));
-      GLCHECK(glDeleteShader(shader_f));
-
-      // Gather Uniform Info
-      for (auto i = 0; i < kAutomaticUniformCount; ++i) {
-        pi.second->uniforms_location[i] = glGetUniformLocation(program_id, Uniforms[i].name);
-      }
-
-      for (auto i = 0; i < kMaxTextureUnits; ++i) {
-        char name[32];
-        snprintf(name, 32, "u_tex%d", i);
-        if (pi.first->info.textures[i]) {
-          pi.second->texture_uniforms_location[i] = glGetUniformLocation(program_id, name);
-        }
-      }
-    }
-
-    if (ctx->last_pipeline.id != pipeline.id) {
-      ctx->last_pipeline = pipeline;
 
       GLCHECK(glUseProgram(pi.second->program));
 
@@ -2007,13 +2015,17 @@ namespace px_render {
           break;
       }
       
-      GLboolean rgbw = pi.first->info.rgba_write?GL_TRUE:GL_FALSE;
-      GLboolean dephtw = pi.first->info.depth_write?GL_TRUE:GL_FALSE;
+      GLboolean rgbw = (pi.first->info.rgba_write)?GL_TRUE:GL_FALSE;
+      GLboolean dephtw = (pi.first->info.depth_write)?GL_TRUE:GL_FALSE;
       GLCHECK(glColorMask(rgbw, rgbw, rgbw, rgbw));
       GLCHECK(glDepthMask(dephtw));
 
-      GLCHECK(glEnable(GL_DEPTH_TEST));
-      GLCHECK(glDepthFunc(Translate(pi.first->info.depth_func)));
+      if (pi.first->info.depth_func != CompareFunc::Disabled) {
+        GLCHECK(glDepthFunc(Translate(pi.first->info.depth_func)));
+        GLCHECK(glEnable(GL_DEPTH_TEST));
+      } else {
+        GLCHECK(glDisable(GL_DEPTH_TEST));
+      }
 
       for (auto i = 0; i < kMaxVertexAttribs; ++i) {
         const auto &attrib = pi.first->info.attribs[i];
@@ -2032,13 +2044,14 @@ namespace px_render {
         }
       }
     }
-    return pi;
   }
 
   static void Execute(RenderContext::Data *ctx, const DisplayList::SetupPipelineData &d, const Mem<uint8_t> *payloads) {
-    auto pi = ChangePipeline(ctx, d.pipeline);
+
+    ChangePipeline(ctx, d);
 
     ctx->model_matrix = d.model_matrix;
+    auto pi = GetResource(ctx, d.pipeline.id, &ctx->pipelines, &ctx->back_end->pipelines);
 
     for (auto i = 1; i < kAutomaticUniformCount; ++i) {
       if (pi.second->uniforms_location[i] >= 0) {
@@ -2062,10 +2075,22 @@ namespace px_render {
       }
     }
 
+    if (d.scissor.f[2] > 0.0f && d.scissor.f[3] > 0.0f) {
+      GLCHECK(glScissor(d.scissor.f[0], d.scissor.f[1], d.scissor.f[2], d.scissor.f[3]));
+      GLCHECK(glEnable(GL_SCISSOR_TEST));
+    } else {
+      GLCHECK(glDisable(GL_SCISSOR_TEST));
+    }
+  }
+
+  static void BeforeRenderGeometry(RenderContext::Data *ctx) {
+    auto pi = GetResource(ctx, ctx->last_pipeline.pipeline.id, &ctx->pipelines, &ctx->back_end->pipelines);
+    auto &last_pipeline_command = ctx->last_pipeline;
+
     size_t tex_unit = 0;
     for (auto i = 0; i < kMaxTextureUnits; ++i) {
       if (pi.second->texture_uniforms_location[i] >= 0) {
-        auto ti = GetResource(ctx, d.texture[i].id, &ctx->textures, &ctx->back_end->textures);
+        auto ti = GetResource(ctx, last_pipeline_command.texture[i].id, &ctx->textures, &ctx->back_end->textures);
         if (!ti.first ) {
           OnError(ctx, "Missing texture.");
           return;
@@ -2092,16 +2117,14 @@ namespace px_render {
       uint32_t attrib_format = pi.first->info.attribs[i].format;
       if (attrib_format) {
         size_t buffer_index = pi.first->info.attribs[i].buffer_index;
-        size_t buffer_id = d.buffer[buffer_index].id;
+        size_t buffer_id = last_pipeline_command.buffer[buffer_index].id;
         if (!buffer_id) {
           OnError(ctx, "Expected Valid buffer (see pipeline declaration)");
           return;
         }
         auto buffer = GetResource(ctx, buffer_id, &ctx->buffers, &ctx->back_end->buffers);
         if (buffer.second->buffer == 0) {
-          // Simulate a empty fill buffer, in order to create the buffer so it is valid
-          // to bind
-          Execute(ctx, DisplayList::FillBufferData{d.buffer[buffer_index]}, nullptr);
+          OnError(ctx, "Invalid OpenGL-buffer (vertex data)");
         }
         GLCHECK(glBindBuffer(GL_ARRAY_BUFFER, buffer.second->buffer));
         GLint a_size = (attrib_format & VertexFormat::NumComponentsMask) >> VertexFormat::NumComponentsShift;
@@ -2114,14 +2137,19 @@ namespace px_render {
         break;
       }
     }
-
-    if (d.scissor.f[2] > 0.0f && d.scissor.f[3] > 0.0f) {
-      GLCHECK(glScissor(d.scissor.f[0], d.scissor.f[1], d.scissor.f[2], d.scissor.f[3]));
-      GLCHECK(glEnable(GL_SCISSOR_TEST));
-    } else {
-      GLCHECK(glDisable(GL_SCISSOR_TEST));
-    }
   }
+
+  static void Execute(RenderContext::Data *ctx, const DisplayList::RenderData &d, const Mem<uint8_t> *payloads) {
+    auto b = GetResource(ctx, d.index_buffer.id, &ctx->buffers, &ctx->back_end->buffers);
+    auto p = GetResource(ctx,ctx->last_pipeline.pipeline.id, &ctx->pipelines, &ctx->back_end->pipelines);
+
+    if (!b.second->buffer) OnError(ctx, "Invalid Index buffer...");
+
+    BeforeRenderGeometry(ctx);
+    GLCHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, b.second->buffer));
+    GLCHECK(glDrawElementsInstanced(Translate(p.first->info.primitive), d.count, Translate(d.type), (void*)d.offset, d.instances));
+  }
+  
 
   void DestroyBackEndResource(RenderContext::Data *ctx, const GPUResource::Type::Enum type, uint32_t pos) {
     BackEnd *b = ctx->back_end;
