@@ -37,7 +37,7 @@ px_sched_examples = px_sched_example1 px_sched_example2 px_sched_example3 px_sch
 all: $(px_sched_examples)
 
 $(px_sched_examples): %: %.cpp ../px_sched.h
-	$(CXX) $(CXXFLAGS) -o $@ $(LDFLAGS) $<
+	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
 .PHONY: clean tests
 clean:
