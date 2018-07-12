@@ -34,10 +34,15 @@ ifeq ($(UNAME_S),Linux)
 endif
 
 px_sched_examples = px_sched_example1 px_sched_example2 px_sched_example3 px_sched_example4 px_sched_example5 px_sched_example6 px_sched_example7
-all: $(px_sched_examples)
+px_render_examples = px_render_example_imgui #WIP: px_render_example_rtt px_render_example_triangle
 
-$(px_sched_examples): %: %.cpp ../px_sched.h
+all: $(px_sched_examples) $(px_render_examples)
+
+$(px_sched_examples): %: %.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+
+$(px_render_examples): %: %.cpp
+	$(CXX) -std=c++14 -fpermissive -D linux -g -O2 -I . -o $@ $< $(LDFLAGS) -ldl -lX11
 
 .PHONY: clean tests
 clean:

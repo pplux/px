@@ -610,11 +610,14 @@ namespace px_render {
 #include <algorithm>
 #include <memory>
 #include <thread>
+#include <condition_variable>
 #include <type_traits>
 #include <atomic>
 #include <list>
 #include <mutex>
 #include <string>
+#include <cstring>
+#include <cmath>
 #include <cassert>
 #include <cstdarg>
 
@@ -1302,9 +1305,9 @@ namespace px_render {
     r3[7] = 1.0, r3[4] = r3[5] = r3[6] = 0.0;
 
     /* choose pivot - or die */
-    if (fabsf(r3[0])>fabsf(r2[0])) SWAP_ROWS(r3, r2);
-    if (fabsf(r2[0])>fabsf(r1[0])) SWAP_ROWS(r2, r1);
-    if (fabsf(r1[0])>fabsf(r0[0])) SWAP_ROWS(r1, r0);
+    if (fabs(r3[0])>fabs(r2[0])) SWAP_ROWS(r3, r2);
+    if (fabs(r2[0])>fabs(r1[0])) SWAP_ROWS(r2, r1);
+    if (fabs(r1[0])>fabs(r0[0])) SWAP_ROWS(r1, r0);
     if (0.0F == r0[0]) return false;
 
     /* eliminate first variable     */
@@ -1322,8 +1325,8 @@ namespace px_render {
     if (s != 0.0F) { r1[7] -= m1 * s; r2[7] -= m2 * s; r3[7] -= m3 * s; }
 
     /* choose pivot - or die */
-    if (fabsf(r3[1])>fabsf(r2[1])) SWAP_ROWS(r3, r2);
-    if (fabsf(r2[1])>fabsf(r1[1])) SWAP_ROWS(r2, r1);
+    if (fabs(r3[1])>fabs(r2[1])) SWAP_ROWS(r3, r2);
+    if (fabs(r2[1])>fabs(r1[1])) SWAP_ROWS(r2, r1);
     if (0.0F == r1[1]) return false;
 
     /* eliminate second variable */
@@ -1336,7 +1339,7 @@ namespace px_render {
     s = r1[7]; if (0.0F != s) { r2[7] -= m2 * s; r3[7] -= m3 * s; }
 
     /* choose pivot - or die */
-    if (fabsf(r3[2])>fabsf(r2[2])) SWAP_ROWS(r3, r2);
+    if (fabs(r3[2])>fabs(r2[2])) SWAP_ROWS(r3, r2);
     if (0.0F == r2[2]) return false;
 
     /* eliminate third variable */
