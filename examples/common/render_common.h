@@ -23,6 +23,11 @@
 #include "../deps/imgui.h"
 #include "../deps/imgui_impl_pxrender.h"
 
+#ifdef Always
+#undef Always // linux: X11.h --> WTF
+#undef None // linux: X11.h --> WTF
+#endif
+
 void init(px_render::RenderContext *ctx, px_sched::Scheduler *sched);
 void finish(px_render::RenderContext *ctx, px_sched::Scheduler *sched);
 void render(px_render::RenderContext *ctx, px_sched::Scheduler *sched);
