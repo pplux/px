@@ -78,8 +78,9 @@ void init() {
 }
 
 void frame() {
-  WinState.sched.waitFor(WinState.frame);
-  WinState.sched.run([]{
+  //WinState.sched.waitFor(WinState.frame);
+  //WinState.sched.run([]
+  {
     ImGuiIO &io = ImGui::GetIO();
     io.DisplaySize = {(float)sapp_width(), (float)sapp_height()};
 
@@ -95,7 +96,8 @@ void frame() {
     }
 
     render(&WinState.ctx, &WinState.sched);
-  }, &WinState.frame);
+  }
+  //, &WinState.frame);
   // GPU Render...
   for(;;) {
     px_render::RenderContext::Result::Enum result = WinState.ctx.executeOnGPU();

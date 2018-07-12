@@ -143,7 +143,8 @@ void ImGui_Impl_pxrender_RenderDrawData(ImDrawData* draw_data, px_render::Displa
     const ImDrawList *cmd_list = draw_data->CmdLists[n];
     size_t required_vertex_size = cmd_list->VtxBuffer.Size * sizeof(ImDrawVert);
     if (required_vertex_size > PRS.vertex_size) {
-      dl_output->destroy(PRS.vertex);
+      auto old = PRS.vertex;
+      dl_output->destroy(old);
       PRS.vertex = PRS.ctx->createBuffer({BufferType::Vertex, required_vertex_size, Usage::Stream});
       PRS.vertex_size = required_vertex_size;
     }
@@ -154,7 +155,8 @@ void ImGui_Impl_pxrender_RenderDrawData(ImDrawData* draw_data, px_render::Displa
       ;
     size_t required_index_size = cmd_list->IdxBuffer.Size *sizeof(ImDrawIdx);
     if (required_index_size > PRS.index_size) {
-      dl_output->destroy(PRS.index);
+      auto old = PRS.index;
+      dl_output->destroy(old);
       PRS.index = PRS.ctx->createBuffer({BufferType::Index, required_index_size, Usage::Stream});
       PRS.index_size = required_index_size;
     }
@@ -172,24 +174,24 @@ void ImGui_Impl_pxrender_RenderDrawData(ImDrawData* draw_data, px_render::Displa
         continue;
       }
     
-     Vec4 clip_rect = { cmd->ClipRect.x - pos.x, cmd->ClipRect.y - pos.y, cmd->ClipRect.z - pos.x, cmd->ClipRect.w - pos.y};
-     if (clip_rect.v.x < fb_width && clip_rect.v.y < fb_height && clip_rect.v.z >= 0.0f && clip_rect.v.w >= 0.0f) {
-      // invert y on scissor
-       Vec4 scissor_rect = { clip_rect.f[0], fb_height - clip_rect.f[3], clip_rect.f[2] - clip_rect.f[0], clip_rect.f[3] - clip_rect.f[1]};
-       dl_output->setupPipelineCommand()
-        .set_pipeline(PRS.pipeline)
-        .set_buffer(0, PRS.vertex)
-        .set_texture(0, *(Texture*)cmd->TextureId)
-        .set_scissor(scissor_rect)
-        ;
-       dl_output->renderCommand()
-        .set_index_buffer(PRS.index)
-        .set_offset(sizeof(ImDrawIdx)*idx_buffer_offset)
-        .set_count(cmd->ElemCount)
-        .set_type(IndexFormat::UInt16)
-        ;
-       idx_buffer_offset += cmd->ElemCount;
-     }
+      Vec4 clip_rect = { cmd->ClipRect.x - pos.x, cmd->ClipRect.y - pos.y, cmd->ClipRect.z - pos.x, cmd->ClipRect.w - pos.y};
+      if (clip_rect.v.x < fb_width && clip_rect.v.y < fb_height && clip_rect.v.z >= 0.0f && clip_rect.v.w >= 0.0f) {
+        // invert y on scissor
+        Vec4 scissor_rect = { clip_rect.f[0], fb_height - clip_rect.f[3], clip_rect.f[2] - clip_rect.f[0], clip_rect.f[3] - clip_rect.f[1]};
+        dl_output->setupPipelineCommand()
+         .set_pipeline(PRS.pipeline)
+         .set_buffer(0, PRS.vertex)
+         .set_texture(0, *(Texture*)cmd->TextureId)
+         .set_scissor(scissor_rect)
+         ;
+        dl_output->renderCommand()
+         .set_index_buffer(PRS.index)
+         .set_offset(sizeof(ImDrawIdx)*idx_buffer_offset)
+         .set_count(cmd->ElemCount)
+         .set_type(IndexFormat::UInt16)
+         ;
+        idx_buffer_offset += cmd->ElemCount;
+      }
     }
   }
 }

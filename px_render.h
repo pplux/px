@@ -593,6 +593,19 @@ namespace px_render {
 #  define PX_REDER_BACKEND_GL 
 #endif
 
+#ifndef PX_RENDER_DEBUG_LEVEL
+#define PX_RENDER_DEBUG_LEVEL 100
+#endif
+
+#ifndef PX_RENDER_DEBUG_FUNC
+#  ifdef PX_RENDER_DEBUG
+#    define PX_RENDER_DEBUG_FUNC(LEVEL,...) {if(LEVEL< PX_RENDER_DEBUG_LEVEL) {fprintf(stdout, __VA_ARGS__);fflush(stdout);}}
+#  else
+#    define PX_RENDER_DEBUG_FUNC(...) /*nothing*/
+#  endif
+#endif
+
+
 #include <vector>
 #include <algorithm>
 #include <memory>
@@ -658,11 +671,12 @@ namespace px_render {
     uint32_t version = 0;
     std::atomic<uint32_t> state = {0};
 
-    bool acquire(uint32_t *out_version) {
-      uint32_t v = version+1;
+    bool acquire() {
+      uint32_t v = (version+1);
+      if (!v) v = 1;
       uint32_t e = 0;
       if (state.compare_exchange_weak(e, v)) {
-        *out_version = v;
+        version = v;
         return true;
       }
       return false;
@@ -816,11 +830,10 @@ namespace px_render {
     char buffer[2048];
     std::vsnprintf(buffer, 2048, format, args);
     va_end(args);
+    PX_RENDER_DEBUG_FUNC(0, "px_render ERROR --> %s\n", buffer);
     if (ctx->params.on_error_callback) {
       ctx->params.on_error_callback(buffer);
     } else {
-      fprintf(stdout, "px_render ERROR --> %s\n", buffer);
-      fflush(stdout);
       assert(!"FATAL ERROR");
     }
   }
@@ -830,14 +843,16 @@ namespace px_render {
     uint32_t try_count = 10; //<... should never need this but...
     while (try_count--) {
       for (uint32_t i = 0; i < pool->count; ++i) {
-        uint32_t version = 0;
-        if ((*pool)[i].acquire(&version)) {
-          return i | (version << 20) ;
+        if ((*pool)[i].acquire()) {
+          uint32_t version = (*pool)[i].version;
+          uint32_t result = i | (version << 20);
+          PX_RENDER_DEBUG_FUNC(100, "AcquireResource %s [%u (%u,%u)]\n", typeid(T).name(), result, i, version);
+          return result;
         }
       }
     }
     // ... no luck
-    ctx->data_->params.on_error_callback("Could not Acquire Resource[T]");
+    OnError(ctx->data_, "Could not allocate instance of type[T]");
     return 0;
   }
 
@@ -857,10 +872,11 @@ namespace px_render {
     uint32_t pos     = pv.first;
     uint32_t version = pv.second;
     const T* result = &(*pool)[pos];
-    uint32_t real_version = result->state.load();
+    uint32_t real_version = (result->state.load() & 0xFFF);
     if (real_version == version) {
       return true;
     }
+    PX_RENDER_DEBUG_FUNC(10,"Ivalid Resource %s [%u (%u,%u != %u)]\n", typeid(T).name(), id, pos, version, real_version);
     return false;
   }
 
@@ -1159,6 +1175,7 @@ namespace px_render {
     if (ctx != dc.resource.ctx->data_ ) OnError(ctx, "RenderContext mismatch");
 
     uint32_t pos = IDToIndex(dc.resource.id);
+    PX_RENDER_DEBUG_FUNC(100,"Destroy Resource %u [%u -> %u)]\n", dc.resource.type, dc.resource.id, pos);
     DestroyBackEndResource(ctx, dc.resource.type, pos);
     switch (dc.resource.type) {
       case GPUResource::Type::Invalid:
@@ -1187,6 +1204,8 @@ namespace px_render {
             ctx->textures[t_pos].state = 0;
           }
         } break;
+      default:
+        OnError(ctx, "Invalid Resource to destroy");
     }
   }
 
@@ -1208,6 +1227,7 @@ namespace px_render {
   void ExecuteDisplayList(RenderContext::Data *ctx, const DisplayList::Data *dl) {
     StartDisplayList(ctx);
     size_t payloads_count = dl->payloads.size();
+    PX_RENDER_DEBUG_FUNC(1000,"Execute DL (Commands %u) (Payloads %u)\n", dl->commands.size(), payloads_count);
     for (auto &c : dl->commands) {
       const Mem<uint8_t> *payloads= nullptr;
       if (c.payload_index < payloads_count) {
@@ -1216,6 +1236,7 @@ namespace px_render {
       switch (c.type) {
       #define C(Name) \
         case DisplayList::Command::Type::Name: \
+          PX_RENDER_DEBUG_FUNC(1500, "  Command " #Name "\n");\
           Execute(ctx, *reinterpret_cast<const DisplayList::Name##Data*>(c.data), payloads);\
           break;
         C(Clear);
@@ -1226,6 +1247,7 @@ namespace px_render {
         C(FillTexture);
       #undef C
         case DisplayList::Command::Type::DestroyResource:
+          PX_RENDER_DEBUG_FUNC(1500, "  Command Destroy\n");\
           Execute(ctx, *reinterpret_cast<const DestroyCommand*>(c.data));
           break;
       }
@@ -1540,7 +1562,6 @@ namespace px_render {
 
   static void CheckGLError(RenderContext::Data *ctx, const char* operation) {
     int32_t error = glGetError();
-    //fprintf(stdout, "GL:%s\n", operation);
     if (error) {
       OnError(ctx, "OpenGL Error: 0x%x (%s)", error, operation);
       return;
@@ -1927,8 +1948,9 @@ namespace px_render {
 
 
   static void ChangePipeline(RenderContext::Data *ctx, const DisplayList::SetupPipelineData &d) {
-    if (d.pipeline.id != ctx->last_pipeline.pipeline.id) {
-      ctx->last_pipeline = d;
+    bool main_pipeline_change = !(d.pipeline.id == ctx->last_pipeline.pipeline.id);
+    ctx->last_pipeline = d;
+    if (main_pipeline_change) {
       auto pi = GetResource(ctx, ctx->last_pipeline.pipeline.id, &ctx->pipelines, &ctx->back_end->pipelines);
       if (pi.second->program == 0) {
         // initialization
@@ -2126,6 +2148,7 @@ namespace px_render {
         if (buffer.second->buffer == 0) {
           OnError(ctx, "Invalid OpenGL-buffer (vertex data)");
         }
+        PX_RENDER_DEBUG_FUNC(4000, "     (Attrib %u) vertex buffer %u\n", i, buffer_id)
         GLCHECK(glBindBuffer(GL_ARRAY_BUFFER, buffer.second->buffer));
         GLint a_size = (attrib_format & VertexFormat::NumComponentsMask) >> VertexFormat::NumComponentsShift;
         GLenum a_type = TranslateVertexType(attrib_format);
@@ -2140,6 +2163,7 @@ namespace px_render {
   }
 
   static void Execute(RenderContext::Data *ctx, const DisplayList::RenderData &d, const Mem<uint8_t> *payloads) {
+    PX_RENDER_DEBUG_FUNC(3000, "    Render With Pipeline %u, index buffer %u\n", ctx->last_pipeline.pipeline.id, d.index_buffer.id)
     auto b = GetResource(ctx, d.index_buffer.id, &ctx->buffers, &ctx->back_end->buffers);
     auto p = GetResource(ctx,ctx->last_pipeline.pipeline.id, &ctx->pipelines, &ctx->back_end->pipelines);
 
@@ -2171,8 +2195,9 @@ namespace px_render {
       case GPUResource::Type::Framebuffer:
         GLCHECK(glDeleteFramebuffers(1, &b->framebuffers[pos].framebuffer));
         b->framebuffers[pos].framebuffer = 0;
-
         break;
+      default:
+        OnError(ctx, "Invalid Resource");
     }
   }
 

@@ -1,3 +1,4 @@
+//#define PX_RENDER_DEBUG
 #include "common/render_common.h"
 // demo
 #include "deps/imgui_demo.cpp"
@@ -30,6 +31,8 @@ uint16_t index_data[] = {
 
 void init(px_render::RenderContext *ctx, px_sched::Scheduler *sched) {
 
+  freopen("px_log.txt", "w", stdout);
+  
   Pipeline::Info pipeline_info;
   pipeline_info.shader.vertex = GLSL(
     uniform mat4 u_viewProjection;
