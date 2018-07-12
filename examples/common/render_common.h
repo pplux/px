@@ -78,9 +78,8 @@ void init() {
 }
 
 void frame() {
-  //WinState.sched.waitFor(WinState.frame);
-  //WinState.sched.run([]
-  {
+  WinState.sched.waitFor(WinState.frame);
+  WinState.sched.run([] {
     ImGuiIO &io = ImGui::GetIO();
     io.DisplaySize = {(float)sapp_width(), (float)sapp_height()};
 
@@ -96,13 +95,10 @@ void frame() {
     }
 
     render(&WinState.ctx, &WinState.sched);
-  }
-  //, &WinState.frame);
-  // GPU Render...
-  for(;;) {
-    px_render::RenderContext::Result::Enum result = WinState.ctx.executeOnGPU();
-    if (result != px_render::RenderContext::Result::OK) break;
-  };
+  } , &WinState.frame);
+
+  // GPU Render... until swap is requested
+  while(WinState.ctx.executeOnGPU() == px_render::RenderContext::Result::OK) {};
 }
 
 void cleanup() {
