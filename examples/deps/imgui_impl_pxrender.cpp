@@ -35,6 +35,16 @@ static struct {
   uint32_t index_size = 0;
 } PRS; // Px-Render-State
 
+
+#ifndef PX_RENDER_IMGUI_GLSL
+  #if defined(PX_RENDER_BACKEND_GLES)
+  #  define PX_RENDER_IMGUI_GLSL(...) "#version 300 es\n precision highp float;\n" #__VA_ARGS__
+  #elif defined(PX_RENDER_BACKEND_GL)
+  #define PX_RENDER_IMGUI_GLSL(...) "#version 330\n" #__VA_ARGS__
+  #else
+  #error No px_render backend selected
+  #endif
+#endif
 void ImGui_Impl_pxrender_Init(px_render::RenderContext *ctx) {
   using namespace px_render;
   assert(PRS.ctx == nullptr &&  "ImGUI_Impl_pxrender_Init() called twice");
@@ -42,8 +52,7 @@ void ImGui_Impl_pxrender_Init(px_render::RenderContext *ctx) {
 
   // -- Create Pipeline Object ---------------------------------------------
   px_render::Pipeline::Info pinfo;
-  #define GLSL(...) "#version 330\n" #__VA_ARGS__
-  pinfo.shader.vertex = GLSL(
+  pinfo.shader.vertex = PX_RENDER_IMGUI_GLSL(
     uniform mat4 u_projection;
     in vec2 pos;
     in vec2 uv;
@@ -56,7 +65,7 @@ void ImGui_Impl_pxrender_Init(px_render::RenderContext *ctx) {
       gl_Position = u_projection*vec4(pos, 0.0, 1.0);
     } 
   );
-  pinfo.shader.fragment = GLSL(
+  pinfo.shader.fragment = PX_RENDER_IMGUI_GLSL(
     uniform sampler2D u_tex0;
     in vec2 frag_uv;
     in vec4 frag_color;
@@ -65,7 +74,6 @@ void ImGui_Impl_pxrender_Init(px_render::RenderContext *ctx) {
       color = vec4(frag_color.rgb, texture(u_tex0, frag_uv).r*frag_color.a);
     }
   );
-  #undef GLSL
   pinfo.attribs[0] = {"pos", VertexFormat::Float2};
   pinfo.attribs[1] = {"uv", VertexFormat::Float2};
   pinfo.attribs[2] = {"color", VertexFormat::UInt8 | VertexFormat::NumComponents4 | VertexFormat::Normalized};
@@ -195,3 +203,5 @@ void ImGui_Impl_pxrender_RenderDrawData(ImDrawData* draw_data, px_render::Displa
     }
   }
 }
+
+#undef PX_RENDER_IMGUI_GLSL

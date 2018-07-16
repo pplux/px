@@ -1,15 +1,7 @@
-//#define PX_RENDER_DEBUG
 #include "common/render_common.h"
+
 // demo
 #include "deps/imgui_demo.cpp"
-
-#ifdef PX_RENDER_BACKEND_GLES
-#  define GLSL(...) "#version 300 es\n precision highp float;\n" #__VA_ARGS__
-#endif
-
-#ifdef PX_RENDER_BACKEND_GL
-#define GLSL(...) "#version 330\n" #__VA_ARGS__
-#endif
 
 using namespace px_render;
 

@@ -1,3 +1,7 @@
+// Define PX_RENDER_DEBUG to enable internal debug
+// #define PX_RENDER_DEBUG
+// #define PX_RENDER_DEBUG_LEVEL 100
+
 // Emscripten config
 #ifdef __EMSCRIPTEN__
 // Compile with  emcc --std=c++14 -s USE_WEBGL2=1 px_render_example_rtt.cpp -o rtt.html
@@ -11,6 +15,18 @@
 #  include "deps/glad.c"
 #endif
 
+// Helper macro to include GLSL code... (for the examples)
+#ifndef GLSL
+#  if defined(PX_RENDER_BACKEND_GLES)
+#    define GLSL(...) "#version 300 es\n precision highp float;\n" #__VA_ARGS__
+#  elif defined(PX_RENDER_BACKEND_GL)
+#    define GLSL(...) "#version 330\n" #__VA_ARGS__
+#  else
+#    error No px_render backend selected
+#  endif
+#endif
+
+// gb_math, sokol, px_render & px_sched implementations
 #define GB_MATH_IMPLEMENTATION
 #define SOKOL_IMPL
 #define PX_RENDER_IMPLEMENTATION
@@ -25,7 +41,7 @@
 
 #ifdef Always
 #undef Always // linux: X11.h --> WTF
-#undef None // linux: X11.h --> WTF
+#undef None   // linux: X11.h --> WTF
 #endif
 
 void init(px_render::RenderContext *ctx, px_sched::Scheduler *sched);
