@@ -78,7 +78,7 @@ void render(px_render::RenderContext *ctx, px_sched::Scheduler *sched) {
   Mat4 proj;
   Mat4 view;
 
-  gb_mat4_perspective((gbMat4*)&proj, 45.f, sapp_width()/(float)sapp_height(), 0.05f, 900.0f);
+  gb_mat4_perspective((gbMat4*)&proj, gb_to_radians(45.f), sapp_width()/(float)sapp_height(), 0.05f, 900.0f);
   gb_mat4_look_at((gbMat4*)&view, {0.f,0.0f,3.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
 
   px_render::DisplayList dl;

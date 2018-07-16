@@ -584,9 +584,7 @@ namespace px_render {
 
 #if defined(PX_RENDER_IMPLEMENTATION) && !defined(PX_RENDER_IMPLEMENTATION_DONE)
 
-#ifndef PX_RENDER_IMPLEMENTATION_DONE
 #define PX_RENDER_IMPLEMENTATION_DONE
-#endif
 
 #if !defined(PX_RENDER_BACKEND_GL) \
  && !defined(PX_RENDER_BACKEND_GLES)

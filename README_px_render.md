@@ -46,7 +46,7 @@ struct {
 
 void init() {
   State.ctx.init();
-  gb_mat4_perspective((gbMat4*)&State.proj, 45.f, 1024/(float)768, 0.05f, 900.0f);
+  gb_mat4_perspective((gbMat4*)&State.proj, gb_to_radians(45.f), 1024/(float)768, 0.05f, 900.0f);
   gb_mat4_look_at((gbMat4*)&State.view, {0.f,0.0f,3.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
 
   State.vertex_buff = State.ctx.createBuffer({BufferType::Vertex, sizeof(Geometry::vertex_data), Usage::Static});

@@ -104,8 +104,8 @@ void init() {
   gladLoadGL();
   #endif
   State.ctx.init();
-  gb_mat4_perspective((gbMat4*)&State.proj, 45.f, 1024/(float)768, 0.05f, 900.0f);
-  gb_mat4_perspective((gbMat4*)&State.proj_fb, 45.f, 1.0f, 0.05f, 900.0f);
+  gb_mat4_perspective((gbMat4*)&State.proj, gb_to_radians(45.f), 1024/(float)768, 0.05f, 900.0f);
+  gb_mat4_perspective((gbMat4*)&State.proj_fb, gb_to_radians(45.f), 1.0f, 0.05f, 900.0f);
   gb_mat4_look_at((gbMat4*)&State.view, {0.f,0.5f,-3.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
   gb_mat4_look_at((gbMat4*)&State.view_fb, {0.f,10.f,-20.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
 
