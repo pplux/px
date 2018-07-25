@@ -1194,6 +1194,8 @@ namespace px_render {
       case GPUResource::Type::Framebuffer:
         {
           FramebufferInstance *fb = &ctx->framebuffers[pos];
+		  fb->state = 0;
+		  
           for (uint32_t i = 0; i < fb->color_texture.count; ++i) {
             uint32_t t_pos = IDToIndex(fb->color_texture[i].id);
             DestroyBackEndResource(ctx, GPUResource::Type::Texture, t_pos);
