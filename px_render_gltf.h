@@ -43,11 +43,13 @@ namespace px_render {
         Geometry_Position   = 1<<0, // Vec3f
         Geometry_Normal     = 1<<1, // Vec3f
         Geometry_TexCoord0  = 1<<2, // Vec2f
-        Material_DiffuseTex = 1<<3,
+        // Material_DiffuseTex = 1<<3, (TODO)
+
+        All = 0xFFFFFFFF
       };
     };
 
-    void init(RenderContext *_ctx, const tinygltf::Model &_model);
+    void init(RenderContext *_ctx, const tinygltf::Model &_model, uint32_t import_flags = Flags::All);
     void freeResources();
     ~GLTF() { freeResources(); }
 
@@ -95,6 +97,7 @@ namespace px_render {
   namespace GLTF_Imp {
 
     using NodeTraverseFunc = std::function<void(const tinygltf::Model &model, uint32_t raw_node_pos, uint32_t raw_parent_node_pos)>;
+    using IndexTraverseFunc = std::function<void(const tinygltf::Model &model, uint32_t index)>;
 
     static void NodeTraverse(
         const tinygltf::Model &model,
@@ -117,9 +120,34 @@ namespace px_render {
       }
     }
 
+    static void IndexTraverse(const tinygltf::Model &model, const tinygltf::Accessor &index_accesor, IndexTraverseFunc func) {
+      const tinygltf::BufferView &buffer_view = model.bufferViews[index_accesor.bufferView];
+      const tinygltf::Buffer &buffer = model.buffers[buffer_view.buffer];
+      const uint8_t* base = &buffer.data.at(buffer_view.byteOffset + index_accesor.byteOffset);
+      switch (index_accesor.componentType) {
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: {
+          const uint32_t *p = (uint32_t*) base;
+          for (size_t i = 0; i < index_accesor.count; ++i) {
+            func(model, p[i]);
+          }
+        }; break;
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: {
+          const uint16_t *p = (uint16_t*) base;
+          for (size_t i = 0; i < index_accesor.count; ++i) {
+            func(model, p[i]);
+          }
+        }; break;
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: {
+          const uint8_t *p = (uint8_t*) base;
+          for (size_t i = 0; i < index_accesor.count; ++i) {
+            func(model, p[i]);
+          }
+        }; break;
+      }
+    }
   }
 
-  void GLTF::init(RenderContext *_ctx, const tinygltf::Model &model) {
+  void GLTF::init(RenderContext *_ctx, const tinygltf::Model &model, uint32_t flags) {
     freeResources();
     ctx = _ctx;
     DisplayList dl;
@@ -149,7 +177,11 @@ namespace px_render {
     // nodes 1st pass, count number of nodes+primitives
     uint32_t total_nodes = 1; // always add one artificial root node
     uint32_t total_primitives = 0;
-    GLTF_Imp::NodeTraverse(model, [&total_nodes, &total_primitives](const tinygltf::Model model, uint32_t n_pos, uint32_t p_pos) {
+    uint32_t total_num_vertices = 0;
+    uint32_t total_num_indices = 0;
+    GLTF_Imp::NodeTraverse(model,
+      [&total_nodes, &total_primitives, &total_num_vertices, &total_num_indices]
+      (const tinygltf::Model model, uint32_t n_pos, uint32_t p_pos) {
       const tinygltf::Node &n = model.nodes[n_pos];
       total_nodes++;
       if (n.mesh >= 0) {
@@ -157,6 +189,20 @@ namespace px_render {
         for(size_t i = 0; i < mesh.primitives.size(); ++i) {
           const tinygltf::Primitive &primitive = mesh.primitives[i];
           if (primitive.indices >= 0) {
+            uint32_t min_vertex_index = (uint32_t)-1;
+            uint32_t max_vertex_index = 0;
+            // TODO: It would be nice to have a cache of index accessors (key=pirmitive.indices)
+            // that way if two or more geometries are identical (because they use the same index buffer)
+            // then the can reuse the same vertex data. Currently, vertex data is extracted for every
+            // primitive....
+            GLTF_Imp::IndexTraverse(model, model.accessors[primitive.indices],
+              [&min_vertex_index, &max_vertex_index, &total_num_vertices, &total_num_indices]
+              (const tinygltf::Model, uint32_t index) {
+                min_vertex_index = std::min(min_vertex_index, index);
+                max_vertex_index = std::max(max_vertex_index, index);
+                total_num_indices++;
+            });
+            total_num_vertices += (max_vertex_index - min_vertex_index +1);
             total_primitives++;
           }
         }
