@@ -113,6 +113,9 @@ namespace px_render {
     static Mat4 Mult(const Mat4 &a, const Mat4 &b);
     static Mat4 Inverse(const Mat4&);
     static Mat4 Transpose(const Mat4&);
+    // Retunrs a Transformation Matrix computed as Scale, then a Rotation, finally a Translation
+    // note, scale x,y,z = axis, w = angle (in radians)
+    static Mat4 SRT(const Vec3 &scale, const Vec4 &rotate_axis_angle, const Vec3 &translate);
   };
 
   static const size_t kMaxVertexAttribs = 16;
