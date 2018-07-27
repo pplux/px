@@ -197,7 +197,7 @@ namespace px_render {
             // primitive....
             GLTF_Imp::IndexTraverse(model, model.accessors[primitive.indices],
               [&min_vertex_index, &max_vertex_index, &total_num_vertices, &total_num_indices]
-              (const tinygltf::Model, uint32_t index) {
+              (const tinygltf::Model&, uint32_t index) {
                 min_vertex_index = std::min(min_vertex_index, index);
                 max_vertex_index = std::max(max_vertex_index, index);
                 total_num_indices++;

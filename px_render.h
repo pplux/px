@@ -1400,6 +1400,60 @@ namespace px_render {
     to[12] = from[3]; to[13] = from[7]; to[14] = from[11]; to[15] = from[15];
   }
 
+
+  Mat4 Mat4::Mult(const Mat4 &a, const Mat4 &b) {
+    Mat4 result;
+    mat4_mult(a.f, b.f, result.f);
+    return result;
+  }
+
+  Mat4 Mat4::Inverse(const Mat4 &m) {
+    Mat4 result;
+    mat4_inverse(m.f,result.f);
+    return result;
+  }
+
+  Mat4 Mat4::Transpose(const Mat4 &m) {
+    Mat4 result;
+    mat4_transpose(m.f,result.f);
+    return result;
+  }
+
+  Mat4 Mat4::SRT(const Vec3 &scale, const Vec4 &rotate_axis_angle, const Vec3 &translate) {
+    float c = cosf(rotate_axis_angle.v.w);
+    float s = sinf(rotate_axis_angle.v.w);
+    float ci = 1.0f -c;
+    float inv_axis_d = 1.0f/sqrtf(
+        rotate_axis_angle.v.x*rotate_axis_angle.v.x +
+        rotate_axis_angle.v.y*rotate_axis_angle.v.y +
+        rotate_axis_angle.v.z*rotate_axis_angle.v.z);
+    float x = rotate_axis_angle.v.x*inv_axis_d;
+    float y = rotate_axis_angle.v.y*inv_axis_d;
+    float z = rotate_axis_angle.v.z*inv_axis_d;
+    return Mat4 {
+      scale.v.x*(x*x*ci+c),
+      scale.v.x*(y*x*ci+c*z*s),
+      scale.v.x*(x*z*ci-y*s),
+      0,
+
+      scale.v.y*(x*y*ci -z*s),
+      scale.v.y*(y*y*ci + c),
+      scale.v.y*(y*z*ci + x*s),
+      0,
+
+      scale.v.z*(x*z*ci+y*s),
+      scale.v.z*(y*z*ci-x*s),
+      scale.v.z*(z*z*ci + c),
+      0, 
+
+      translate.v.x,
+      translate.v.y,
+      translate.v.z,
+      1.0f
+    };
+
+  }
+
   static void ComputeModel(RenderContext::Data *ctx, float *output, uint8_t *range) {
     memcpy(output, ctx->model_matrix.f, sizeof(float)*16);
     *range = 4;
