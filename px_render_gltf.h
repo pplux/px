@@ -57,8 +57,6 @@ namespace px_render {
       uint32_t flags; // GLTF::Flags mask (identify what attributes the geometry has)
       uint32_t node;
       uint32_t mesh;
-      uint32_t vertex_buff;
-      uint32_t index_buff;
       uint32_t index_offset;
       uint32_t index_count;
       uint32_t diffuse_texture;
@@ -71,7 +69,8 @@ namespace px_render {
     };
 
     RenderContext *ctx = nullptr;
-    std::unique_ptr<Buffer[]> buffers;
+    Buffer vertex_buffer;
+    Buffer index_buffer;
     std::unique_ptr<Node[]> nodes;
     std::unique_ptr<Primitive[]> primitives;
     std::unique_ptr<Texture[]> textures;
@@ -145,40 +144,51 @@ namespace px_render {
         }; break;
       }
     }
+
+    static void ExtractVertexData(uint32_t v_pos, const uint8_t *base, int accesor_componentType, int accesor_type, bool accesor_normalized, uint32_t byteStride, float *output, uint8_t max_num_comp) {
+      float v[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+      uint32_t ncomp = 1;
+      switch (accesor_type) {
+        case TINYGLTF_TYPE_SCALAR: ncomp = 1; break;
+        case TINYGLTF_TYPE_VEC2:   ncomp = 2; break;
+        case TINYGLTF_TYPE_VEC3:   ncomp = 3; break;
+        case TINYGLTF_TYPE_VEC4:   ncomp = 4; break;
+        default:
+          assert(!"invalid type");
+      }
+      switch (accesor_componentType) {
+        case TINYGLTF_COMPONENT_TYPE_FLOAT: {
+          const float *data = (float*)(base+byteStride*v_pos);
+          for (uint32_t i = 0; (i < ncomp); ++i) {
+            v[i] = data[i];
+          }
+        }
+        // TODO SUPPORT OTHER FORMATS
+        break;
+        default:
+          assert(!"Conversion Type from float to -> ??? not implemented yet");
+          break;
+      }
+      for (uint32_t i = 0; i < max_num_comp; ++i) {
+        output[i] = v[i];
+      }
+    }
   }
 
   void GLTF::init(RenderContext *_ctx, const tinygltf::Model &model, uint32_t flags) {
     freeResources();
     ctx = _ctx;
-    DisplayList dl;
-    // Buffers
-    const size_t num_buffers = model.bufferViews.size();
-    buffers = std::unique_ptr<Buffer[]>(new Buffer[num_buffers]);
-    for (size_t i = 0; i < num_buffers; i++) {
-      const tinygltf::BufferView &buffer_view = model.bufferViews[i];
-      const tinygltf::Buffer &buffer = model.buffers[buffer_view.buffer];
-      BufferType::Enum type;
-      switch (buffer_view.target) {
-        case TINYGLTF_TARGET_ARRAY_BUFFER:
-          type = BufferType::Vertex;
-          break;
-        case TINYGLTF_TARGET_ELEMENT_ARRAY_BUFFER:
-          type = BufferType::Index;
-          break;
-        default:
-          assert(!"Invalid target");
-      }
-      buffers[i] = ctx->createBuffer({type,buffer.data.size(), Usage::Static});
-      dl.fillBufferCommand()
-        .set_buffer(buffers[i])
-        .set_data(&buffer.data.at(0)+buffer_view.byteOffset)
-        .set_size(buffer_view.byteLength);
-    }
     // nodes 1st pass, count number of nodes+primitives
     uint32_t total_nodes = 1; // always add one artificial root node
     uint32_t total_primitives = 0;
     uint32_t total_num_vertices = 0;
     uint32_t total_num_indices = 0;
+    uint32_t const vertex_size = 0
+      + (flags&Flags::Geometry_Position?  sizeof(float)*3: 0)
+      + (flags&Flags::Geometry_Normal?    sizeof(float)*3: 0)
+      + (flags&Flags::Geometry_TexCoord0? sizeof(float)*2: 0)
+      ;
+
     GLTF_Imp::NodeTraverse(model,
       [&total_nodes, &total_primitives, &total_num_vertices, &total_num_indices]
       (const tinygltf::Model model, uint32_t n_pos, uint32_t p_pos) {
@@ -208,16 +218,28 @@ namespace px_render {
         }
       }
     });
-    // nodes 2nd pass, gather info
+
     nodes = std::unique_ptr<Node[]>(new Node[total_nodes]);
     primitives = std::unique_ptr<Primitive[]>(new Primitive[total_primitives]);
+    std::unique_ptr<float[]> vertex_data {new float[total_num_vertices*vertex_size/sizeof(float)]};
+    std::unique_ptr<uint32_t[]> index_data {new uint32_t[total_num_indices]};
+
+    // fill with 0s vertex data
+    memset(vertex_data.get(), 0, sizeof(float)*total_num_vertices);
+
+    // nodes 2nd pass, gather info
     nodes[0].model = nodes[0].transform = Mat4::Identity();
     nodes[0].parent = 0; 
     auto node_map = std::unique_ptr<uint32_t[]>(new uint32_t[model.nodes.size()]);
     uint32_t current_node = 1;
     uint32_t current_primitive = 0;
+    uint32_t current_mesh = 0;
+    uint32_t current_vertex = 0;
+    uint32_t current_index = 0;
     GLTF_Imp::NodeTraverse(model,
-      [&current_node, &current_primitive, &node_map, total_nodes, total_primitives, this]
+      [&current_node, &current_primitive, &node_map, &current_mesh,
+       &current_vertex, &current_index, &index_data, &vertex_data,
+       total_nodes, total_primitives, vertex_size, flags, this]
       (const tinygltf::Model &model, uint32_t n_pos, uint32_t p_pos) mutable {
         const tinygltf::Node &gltf_n = model.nodes[n_pos];
         Node &node = nodes[current_node];
@@ -264,25 +286,170 @@ namespace px_render {
           for(size_t i = 0; i < mesh.primitives.size(); ++i) {
             const tinygltf::Primitive &gltf_p = mesh.primitives[i];
             if (gltf_p.indices >= 0) {
+              uint32_t min_vertex_index = (uint32_t)-1;
+              uint32_t max_vertex_index = 0;
+              uint32_t index_count = 0;
+              GLTF_Imp::IndexTraverse(model, model.accessors[gltf_p.indices],
+                [&min_vertex_index, &max_vertex_index, &current_index, &index_count, &index_data, &current_vertex]
+                (const tinygltf::Model&, uint32_t index) {
+                  min_vertex_index = std::min(min_vertex_index, index);
+                  max_vertex_index = std::max(max_vertex_index, index);
+                  index_data[current_index+index_count] = index;
+                  index_count++;
+              });
+
               Primitive &primitive = primitives[current_primitive];
               primitive.node = current_node;
-              primitive.mesh = gltf_n.mesh; // maybe a mesh counter would be better
-              
-              for (const auto &atrib : gltf_p.attributes) {
+              primitive.mesh = current_mesh;
+              primitive.index_count = index_count;
+              primitive.index_offset = current_index;
+              current_index += index_count;
 
+              using AttribWritter = std::function<void(float *w, uint32_t p)> ;
+
+              AttribWritter w_position  = [](float *w, uint32_t p) {};
+              AttribWritter w_normal    = [](float *w, uint32_t p) {};
+              AttribWritter w_texcoord0 = [](float *w, uint32_t p) {};
+
+              uint32_t vertex_stride_float = vertex_size/sizeof(float);
+              for (const auto &attrib : gltf_p.attributes) {
+
+                AttribWritter *writter = nullptr;
+                unsigned int max_components = 0;
+                if ((flags & Flags::Geometry_Position) && attrib.first.compare("POSITION") == 0) {
+                  writter = &w_position;
+                  max_components = 3;
+                } else if ((flags & Flags::Geometry_Normal) && attrib.first.compare("NORMAL") == 0) {
+                  writter = &w_normal;
+                  max_components = 3;
+                } else if ((flags & Flags::Geometry_TexCoord0) && attrib.first.compare("TEXCOORD_0") == 0) {
+                  writter = &w_texcoord0;
+                  max_components = 2;
+                }
+
+                if (!writter) continue;
+                
+                const tinygltf::Accessor &accesor = model.accessors[attrib.second];
+                const tinygltf::BufferView &buffer_view = model.bufferViews[accesor.bufferView];
+                const tinygltf::Buffer &buffer = model.buffers[buffer_view.buffer];
+                const uint8_t* base = &buffer.data.at(buffer_view.byteOffset + accesor.byteOffset);
+                int byteStride = accesor.ByteStride(buffer_view);
+                const bool normalized = accesor.normalized;
+
+                switch (accesor.type) {
+                  case TINYGLTF_TYPE_SCALAR: max_components = std::min(max_components, 1u); break;
+                  case TINYGLTF_TYPE_VEC2:   max_components = std::min(max_components, 2u); break;
+                  case TINYGLTF_TYPE_VEC3:   max_components = std::min(max_components, 3u); break;
+                  case TINYGLTF_TYPE_VEC4:   max_components = std::min(max_components, 4u); break;
+                }
+
+                switch (accesor.componentType) {
+                  case TINYGLTF_COMPONENT_TYPE_FLOAT: *writter =
+                    [base, byteStride, max_components](float *w, uint32_t p) {
+                      const float *f = (const float *)(base + p*byteStride);
+                      for (unsigned int i = 0; i < max_components; ++i) {
+                        w[i] = f[i];
+                      }
+                    }; break;
+                  case TINYGLTF_COMPONENT_TYPE_DOUBLE: *writter =
+                    [base, byteStride, max_components](float *w, uint32_t p) {
+                      const double*f = (const double*)(base + p*byteStride);
+                      for (unsigned int i = 0; i < max_components; ++i) {
+                        w[i] = f[i];
+                      }
+                    }; break;
+                  case TINYGLTF_COMPONENT_TYPE_BYTE: *writter =
+                    [base, byteStride, max_components,normalized](float *w, uint32_t p) {
+                      const int8_t *f = (const int8_t*)(base + p*byteStride);
+                      for (unsigned int i = 0; i < max_components; ++i) {
+                        w[i] = normalized?f[i]/(float)128:f[i];
+                      }
+                    }; break;
+                  case TINYGLTF_COMPONENT_TYPE_SHORT: *writter =
+                    [base, byteStride, max_components,normalized](float *w, uint32_t p) {
+                      const int16_t *f = (const int16_t*)(base + p*byteStride);
+                      for (unsigned int i = 0; i < max_components; ++i) {
+                        w[i] = normalized?f[i]/(float)32768:f[i];
+                      }
+                    }; break;
+                  case TINYGLTF_COMPONENT_TYPE_INT: *writter =
+                    [base, byteStride, max_components,normalized](float *w, uint32_t p) {
+                      const int32_t *f = (const int32_t*)(base + p*byteStride);
+                      for (unsigned int i = 0; i < max_components; ++i) {
+                        w[i] = normalized?f[i]/(float)2147483648:f[i];
+                      }
+                    }; break;
+                  case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: *writter =
+                    [base, byteStride, max_components,normalized](float *w, uint32_t p) {
+                      const uint8_t *f = (const uint8_t*)(base + p*byteStride);
+                      for (unsigned int i = 0; i < max_components; ++i) {
+                        w[i] = normalized?f[i]/(float)255:f[i];
+                      }
+                    }; break;
+                  case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: *writter =
+                    [base, byteStride, max_components,normalized](float *w, uint32_t p) {
+                      const uint16_t *f = (const uint16_t*)(base + p*byteStride);
+                      for (unsigned int i = 0; i < max_components; ++i) {
+                        w[i] = normalized?f[i]/(float)65535:f[i];
+                      }
+                    }; break;
+                  case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: *writter =
+                    [base, byteStride, max_components,normalized](float *w, uint32_t p) {
+                      const uint32_t *f = (const uint32_t*)(base + p*byteStride);
+                      for (unsigned int i = 0; i < max_components; ++i) {
+                        w[i] = normalized?f[i]/(float)4294967295:f[i];
+                      }
+                    }; break;
+                  default:
+                    assert(!"Not supported component type (yet)");
+                }
+              }
+
+              uint32_t offset = 0;
+              if (flags & Flags::Geometry_Position) {
+                for (uint32_t i = min_vertex_index; i <= max_vertex_index; ++i) {
+                  w_position(&vertex_data[current_vertex+i-min_vertex_index+offset], i);
+                }
+                offset += 3;
+              }
+              if (flags & Flags::Geometry_Normal) {
+                for (uint32_t i = min_vertex_index; i <= max_vertex_index; ++i) {
+                  w_normal(&vertex_data[current_vertex+i-min_vertex_index+offset], i);
+                }
+                offset += 3;
+              }
+              if (flags & Flags::Geometry_TexCoord0) {
+                for (uint32_t i = min_vertex_index; i <= max_vertex_index; ++i) {
+                  w_texcoord0(&vertex_data[current_vertex+i-min_vertex_index+offset], i);
+                }
+                offset += 2;
+              }
+
+              for (uint32_t i = 0; i < primitive.index_count; ++i) {
+                index_data[primitive.index_offset+i] += current_vertex;
+                index_data[primitive.index_offset+i] -= min_vertex_index;
               }
               
+              current_vertex += max_vertex_index - min_vertex_index+1;
               current_primitive++;
             }
           }
+          current_mesh++;
         }
-
-
-
         current_node++;
     });
 
-
+    DisplayList dl;
+    vertex_buffer = ctx->createBuffer({BufferType::Vertex, vertex_size*total_num_vertices, Usage::Static});
+    index_buffer  = ctx->createBuffer({BufferType::Index, sizeof(uint32_t)*total_num_indices, Usage::Static});
+    dl.fillBufferCommand()
+      .set_buffer(vertex_buffer)
+      .set_data(vertex_data.get())
+      .set_size(vertex_size*total_num_vertices);
+    dl.fillBufferCommand()
+      .set_buffer(index_buffer)
+      .set_data(index_data.get())
+      .set_size(sizeof(uint32_t)*total_num_indices);
     // submit all data transactions
     ctx->submitDisplayList(std::move(dl));
   }
