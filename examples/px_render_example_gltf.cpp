@@ -11,31 +11,21 @@ using namespace px_render;
 
 struct {
   Pipeline material;
-  Buffer vertex_buff;
-  Buffer index_buff;
   GLTF gltf;
+  std::atomic<bool> gltf_ready = {false};
 } State ;
-
-float vertex_data[] = {
-  -1.0, -1.0, 0.0,   1.0, 0.0, 0.0,
-   1.0, -1.0, 0.0,   0.0, 1.0, 0.0,
-   0.0,  0.8, 0.0,   0.0, 0.0, 1.0,
-};
-
-uint16_t index_data[] = {
-  0, 1, 2,
-};
 
 void init(px_render::RenderContext *ctx, px_sched::Scheduler *sched) {
   Pipeline::Info pipeline_info;
   pipeline_info.shader.vertex = GLSL(
     uniform mat4 u_viewProjection;
     in vec3 position;
-    in vec3 color;
+    in vec3 normal;
+    in vec2 uv;
     out vec3 v_color;
     void main() {
       gl_Position = u_viewProjection * vec4(position,1.0);
-      v_color = color;
+      v_color = normal;
     }
   );
   pipeline_info.shader.fragment = GLSL(
@@ -46,33 +36,20 @@ void init(px_render::RenderContext *ctx, px_sched::Scheduler *sched) {
     }
   );
   pipeline_info.attribs[0] = {"position", VertexFormat::Float3};
-  pipeline_info.attribs[1] = {"color", VertexFormat::Float3};
+  pipeline_info.attribs[1] = {"normal", VertexFormat::Float3};
+  pipeline_info.attribs[2] = {"uv", VertexFormat::Float2};
   State.material = ctx->createPipeline(pipeline_info);
-
-  State.vertex_buff = ctx->createBuffer({BufferType::Vertex, sizeof(vertex_data), Usage::Static});
-  State.index_buff  = ctx->createBuffer({BufferType::Index,  sizeof(index_data),  Usage::Static});
-  // upload data
-  DisplayList dl;
-  dl.fillBufferCommand()
-    .set_buffer(State.vertex_buff)
-    .set_data(vertex_data)
-    .set_size(sizeof(vertex_data));
-  dl.fillBufferCommand()
-    .set_buffer(State.index_buff)
-    .set_data(index_data)
-    .set_size(sizeof(index_data));
-
-  ctx->submitDisplayList(std::move(dl));
 
   sched->run([ctx]{
     tinygltf::TinyGLTF loader;
     tinygltf::Model model;
     std::string err;
-    if (!loader.LoadASCIIFromFile(&model, &err, "t1/scene.gltf")) {
+    if (!loader.LoadASCIIFromFile(&model, &err, "t2/Scene.gltf")) {
       fprintf(stderr,"Error loading GLTF %s", err.c_str());
       assert(!"GLTF_ERROR");
     }
      State.gltf.init(ctx, model);
+     State.gltf_ready = true;
   });
 }
 
@@ -84,7 +61,7 @@ void render(px_render::RenderContext *ctx, px_sched::Scheduler *sched) {
   Mat4 view;
 
   gb_mat4_perspective((gbMat4*)&proj, gb_to_radians(45.f), sapp_width()/(float)sapp_height(), 0.05f, 900.0f);
-  gb_mat4_look_at((gbMat4*)&view, {0.f,0.0f,3.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
+  gb_mat4_look_at((gbMat4*)&view, {0.f,0.0f,300.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
 
   px_render::DisplayList dl;
   dl.setupViewCommand()
@@ -97,15 +74,21 @@ void render(px_render::RenderContext *ctx, px_sched::Scheduler *sched) {
     .set_clear_color(true)
     .set_clear_depth(true)
     ;
-  dl.setupPipelineCommand()
-    .set_pipeline(State.material)
-    .set_buffer(0,State.vertex_buff)
-    ;
-  dl.renderCommand()
-    .set_index_buffer(State.index_buff)
-    .set_count(3)
-    .set_type(IndexFormat::UInt16)
-    ;
+  if (State.gltf_ready) {
+    for(uint32_t i = 0; i < State.gltf.num_primitives; ++i) {
+      dl.setupPipelineCommand()
+        .set_pipeline(State.material)
+        .set_buffer(0,State.gltf.vertex_buffer)
+        .set_model_matrix(State.gltf.nodes[State.gltf.primitives[i].node].model)
+        ;
+      dl.renderCommand()
+        .set_index_buffer(State.gltf.index_buffer)
+        .set_count(State.gltf.primitives[i].index_count)
+        .set_offset(State.gltf.primitives[i].index_offset*sizeof(uint32_t))
+        .set_type(IndexFormat::UInt32)
+        ;
+     }
+  }
   
   ImGui::NewFrame();
   ImGui::Render();

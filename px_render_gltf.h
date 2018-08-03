@@ -54,12 +54,11 @@ namespace px_render {
     ~GLTF() { freeResources(); }
 
     struct Primitive {
-      uint32_t flags; // GLTF::Flags mask (identify what attributes the geometry has)
       uint32_t node;
       uint32_t mesh;
       uint32_t index_offset;
       uint32_t index_count;
-      uint32_t diffuse_texture;
+      // uint32_t texture_diffuse;
     };
 
     struct Node {
@@ -71,6 +70,8 @@ namespace px_render {
     RenderContext *ctx = nullptr;
     Buffer vertex_buffer;
     Buffer index_buffer;
+    uint32_t num_primitives = 0;
+    uint32_t num_nodes = 0;
     std::unique_ptr<Node[]> nodes;
     std::unique_ptr<Primitive[]> primitives;
     std::unique_ptr<Texture[]> textures;
@@ -113,7 +114,8 @@ namespace px_render {
     static const uint32_t InvalidNode = (uint32_t)-1;
 
     static void NodeTraverse(const tinygltf::Model &model, NodeTraverseFunc func) {
-      const tinygltf::Scene &scene = model.scenes[model.defaultScene];
+      int scene_index = std::max(model.defaultScene, 0);
+      const tinygltf::Scene &scene = model.scenes[scene_index];
       for (uint32_t i = 0; i < scene.nodes.size(); ++i) {
         NodeTraverse(model, scene.nodes[i], InvalidNode, func);
       }
@@ -239,7 +241,7 @@ namespace px_render {
     GLTF_Imp::NodeTraverse(model,
       [&current_node, &current_primitive, &node_map, &current_mesh,
        &current_vertex, &current_index, &index_data, &vertex_data,
-       total_nodes, total_primitives, vertex_size, flags, this]
+       total_nodes, total_primitives, total_num_vertices, vertex_size, flags, this]
       (const tinygltf::Model &model, uint32_t n_pos, uint32_t p_pos) mutable {
         const tinygltf::Node &gltf_n = model.nodes[n_pos];
         Node &node = nodes[current_node];
@@ -405,24 +407,25 @@ namespace px_render {
                 }
               }
 
-              uint32_t offset = 0;
+              uint32_t vertex_offset = 0;
+
               if (flags & Flags::Geometry_Position) {
-                for (uint32_t i = min_vertex_index; i <= max_vertex_index; ++i) {
-                  w_position(&vertex_data[current_vertex+i-min_vertex_index+offset], i);
+                for (uint32_t i = 0 ; i <= max_vertex_index-min_vertex_index; ++i) {
+                  w_position(&vertex_data[vertex_offset+(current_vertex+i)*vertex_stride_float], i+min_vertex_index);
                 }
-                offset += 3;
+                vertex_offset += 3;
               }
               if (flags & Flags::Geometry_Normal) {
-                for (uint32_t i = min_vertex_index; i <= max_vertex_index; ++i) {
-                  w_normal(&vertex_data[current_vertex+i-min_vertex_index+offset], i);
+                for (uint32_t i = 0; i <= max_vertex_index-min_vertex_index; ++i) {
+                  w_normal(&vertex_data[vertex_offset+(current_vertex+i)*vertex_stride_float], i+min_vertex_index);
                 }
-                offset += 3;
+                vertex_offset += 3;
               }
               if (flags & Flags::Geometry_TexCoord0) {
-                for (uint32_t i = min_vertex_index; i <= max_vertex_index; ++i) {
-                  w_texcoord0(&vertex_data[current_vertex+i-min_vertex_index+offset], i);
+                for (uint32_t i = 0; i <= max_vertex_index-min_vertex_index; ++i) {
+                  w_texcoord0(&vertex_data[vertex_offset+(current_vertex+i)*vertex_stride_float], i+min_vertex_index);
                 }
-                offset += 2;
+                vertex_offset += 2;
               }
 
               for (uint32_t i = 0; i < primitive.index_count; ++i) {
@@ -450,12 +453,23 @@ namespace px_render {
       .set_buffer(index_buffer)
       .set_data(index_data.get())
       .set_size(sizeof(uint32_t)*total_num_indices);
-    // submit all data transactions
     ctx->submitDisplayList(std::move(dl));
+
+    num_nodes = total_nodes;
+    num_primitives = total_primitives;
   }
 
   void GLTF::freeResources() {
-    // TODO
+    if (num_nodes) {
+      num_nodes = 0;
+      num_primitives = 0;
+      nodes.reset();
+      primitives.reset();
+      DisplayList dl;
+      dl.destroy(vertex_buffer);
+      dl.destroy(index_buffer);
+      ctx->submitDisplayList(std::move(dl));
+    }
   }
 }
 
