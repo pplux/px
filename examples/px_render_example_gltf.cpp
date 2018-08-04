@@ -63,9 +63,11 @@ void render(px_render::RenderContext *ctx, px_sched::Scheduler *sched) {
   float dmin = std::min<float>({State.gltf.bounds_min.f[0], State.gltf.bounds_min.f[1], State.gltf.bounds_min.f[2]});
   float dmax = std::max<float>({State.gltf.bounds_max.f[0], State.gltf.bounds_max.f[1], State.gltf.bounds_max.f[2]});
 
-  gb_mat4_perspective((gbMat4*)&proj, gb_to_radians(45.f), sapp_width()/(float)sapp_height(), 1.0f, (dmax-dmin)*1.5f);
-  gb_mat4_look_at((gbMat4*)&view, {0.f,0.0f,(dmax-dmin)*1.2f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
-
+  gb_mat4_perspective((gbMat4*)&proj, gb_to_radians(45.f), sapp_width()/(float)sapp_height(), 1.0f, (dmax-dmin)*2.0f);
+  gb_mat4_look_at((gbMat4*)&view, {0.f,(dmax-dmin)*1.2f,0.0f}, {0.f,0.f,0.0f}, {0.f,0.f,1.f});
+  static float angle = 0.0f;
+  angle += 0.01f;
+  view = Mat4::Mult(view, Mat4::SRT({1.0f,1.0f,1.0f}, {0.0f, 0.0f, 1.0f, angle}, {0.0f, 0.0f, 0.0f}));
   px_render::DisplayList dl;
   dl.setupViewCommand()
     .set_viewport({0,0, (uint16_t) sapp_width(), (uint16_t) sapp_height()})

@@ -1442,7 +1442,7 @@ namespace px_render {
     float z = rotate_axis_angle.v.z*inv_axis_d;
     return Mat4 {
       scale.v.x*(x*x*ci+c),
-      scale.v.x*(y*x*ci+c*z*s),
+      scale.v.x*(y*x*ci+z*s),
       scale.v.x*(x*z*ci-y*s),
       0,
 

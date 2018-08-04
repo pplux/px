@@ -61,8 +61,8 @@ namespace px_render {
       uint32_t index_offset = 0;
       uint32_t index_count = 0;
       // uint32_t texture_diffuse;
-      Vec3 bounds_min = {0.0f, 0.0f, 0.0f};
-      Vec3 bounds_max = {0.0f, 0.0f, 0.0f};
+      Vec3 bounds_min = {0.0f, 0.0f, 0.0f}; // bounds in world coordinates
+      Vec3 bounds_max = {0.0f, 0.0f, 0.0f}; // bounds in world coordinates
     };
 
     struct Node {
@@ -79,8 +79,8 @@ namespace px_render {
     std::unique_ptr<Node[]> nodes;
     std::unique_ptr<Primitive[]> primitives;
     std::unique_ptr<Texture[]> textures;
-    Vec3 bounds_min = {0.0f, 0.0f, 0.0f};
-    Vec3 bounds_max = {0.0f, 0.0f, 0.0f};
+    Vec3 bounds_min = {0.0f, 0.0f, 0.0f}; // bounds in world coordinates
+    Vec3 bounds_max = {0.0f, 0.0f, 0.0f}; // bounds in world coordinates
   };
   
 }
@@ -256,7 +256,7 @@ namespace px_render {
           for(size_t i = 0; i < 16; ++i) node.transform.f[i] = (float) gltf_n.matrix[i];
         } else {
           Vec3 s = {1.0f, 1.0f, 1.0f};
-          Vec4 r = {0.0f, 0.0f, 0.0f, 0.0f};
+          Vec4 r = {0.0f, 1.0f, 0.0f, 0.0f};
           Vec3 t = {0.0f, 0.0f, 0.0f};
           if (gltf_n.scale.size() == 3) {
             s = Vec3{
