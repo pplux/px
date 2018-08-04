@@ -31,6 +31,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #ifndef PX_RENDER_GLTF
 #define PX_RENDER_GLTF
 
+#include <cstdint>
+
 #ifndef PX_RENDER
 #error px_render must be included before px_render_gltf (because gltf plugin does not include px_render.h)
 #endif
@@ -60,7 +62,7 @@ namespace px_render {
       uint32_t mesh = 0;
       uint32_t index_offset = 0;
       uint32_t index_count = 0;
-      // uint32_t texture_diffuse;
+      int32_t material = -1;
       Vec3 bounds_min = {0.0f, 0.0f, 0.0f}; // bounds in world coordinates
       Vec3 bounds_max = {0.0f, 0.0f, 0.0f}; // bounds in world coordinates
     };
@@ -71,14 +73,52 @@ namespace px_render {
       uint32_t parent = 0;
     };
 
+    struct Material {
+      struct {
+        int32_t texture = -1;
+        Vec4 factor = {1.0f, 1.0f, 1.0f, 1.0f};
+      } base_color;
+      struct {
+        int32_t texture = -1;
+        float metallic_factor = 0.5f;
+        float roughness_factor = 0.5f;
+      } metallic_roughness;
+      struct {
+        int32_t texture = -1;
+        float factor = 1.0f; // scale
+      } normal;
+      struct {
+        int32_t texture = -1;
+        float factor = 1.0f; //strength
+      } occlusion;
+      struct {
+        int32_t texture = -1;
+        Vec3 factor = {1.0f, 1.0f, 1.0f};
+      } emmisive;
+
+      int32_t normal_texture = -1;
+      int32_t occlusion_texture = -1;
+      int32_t emissive_texture = -1;
+      Vec3 emissive_factor = {1.0f, 1.0f, 1.0f};
+    };
+
+    struct Texture {
+      std::string uri;
+      px_render::Texture::Info info; //> partially filled with sampler data
+      px_render::Texture tex; //> empty, just for convenience, so you can fill with proper texture
+    };
+
     RenderContext *ctx = nullptr;
     Buffer vertex_buffer;
     Buffer index_buffer;
     uint32_t num_primitives = 0;
     uint32_t num_nodes = 0;
+    uint32_t num_materials = 0;
+    uint32_t num_textures = 0;
     std::unique_ptr<Node[]> nodes;
     std::unique_ptr<Primitive[]> primitives;
     std::unique_ptr<Texture[]> textures;
+    std::unique_ptr<Material[]> materials;
     Vec3 bounds_min = {0.0f, 0.0f, 0.0f}; // bounds in world coordinates
     Vec3 bounds_max = {0.0f, 0.0f, 0.0f}; // bounds in world coordinates
   };
