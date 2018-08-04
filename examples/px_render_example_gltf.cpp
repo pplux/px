@@ -59,9 +59,12 @@ void finish(px_render::RenderContext *ctx, px_sched::Scheduler *sched) {
 void render(px_render::RenderContext *ctx, px_sched::Scheduler *sched) {
   Mat4 proj;
   Mat4 view;
+  
+  float dmin = std::min<float>({State.gltf.bounds_min.f[0], State.gltf.bounds_min.f[1], State.gltf.bounds_min.f[2]});
+  float dmax = std::max<float>({State.gltf.bounds_max.f[0], State.gltf.bounds_max.f[1], State.gltf.bounds_max.f[2]});
 
-  gb_mat4_perspective((gbMat4*)&proj, gb_to_radians(45.f), sapp_width()/(float)sapp_height(), 0.05f, 900.0f);
-  gb_mat4_look_at((gbMat4*)&view, {0.f,0.0f,300.f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
+  gb_mat4_perspective((gbMat4*)&proj, gb_to_radians(45.f), sapp_width()/(float)sapp_height(), 1.0f, (dmax-dmin)*1.5f);
+  gb_mat4_look_at((gbMat4*)&view, {0.f,0.0f,(dmax-dmin)*1.2f}, {0.f,0.f,0.0f}, {0.f,1.f,0.f});
 
   px_render::DisplayList dl;
   dl.setupViewCommand()
@@ -76,10 +79,12 @@ void render(px_render::RenderContext *ctx, px_sched::Scheduler *sched) {
     ;
   if (State.gltf_ready) {
     for(uint32_t i = 0; i < State.gltf.num_primitives; ++i) {
+      const auto &node_idx = State.gltf.primitives[i].node;
+      const auto &model = State.gltf.nodes[node_idx].model;
       dl.setupPipelineCommand()
         .set_pipeline(State.material)
         .set_buffer(0,State.gltf.vertex_buffer)
-        .set_model_matrix(State.gltf.nodes[State.gltf.primitives[i].node].model)
+        .set_model_matrix(model)
         ;
       dl.renderCommand()
         .set_index_buffer(State.gltf.index_buffer)

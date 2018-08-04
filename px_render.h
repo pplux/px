@@ -111,6 +111,7 @@ namespace px_render {
         };
     }
     static Mat4 Mult(const Mat4 &a, const Mat4 &b);
+    static Vec4 Mult(const Mat4 &a, const Vec4 &b);
     static Mat4 Inverse(const Mat4&);
     static Mat4 Transpose(const Mat4&);
     // Retunrs a Transformation Matrix computed as Scale, then a Rotation, finally a Translation
@@ -1404,6 +1405,15 @@ namespace px_render {
   Mat4 Mat4::Mult(const Mat4 &a, const Mat4 &b) {
     Mat4 result;
     mat4_mult(a.f, b.f, result.f);
+    return result;
+  }
+
+  Vec4 Mat4::Mult(const Mat4 &a, const Vec4 &b) {
+    Vec4 result;
+    result.f[0] = a.column[0].f[0]*b.f[0] + a.column[1].f[0]*b.f[1] + a.column[2].f[0]*b.f[2] + a.column[3].f[0]*b.f[3];
+    result.f[1] = a.column[0].f[1]*b.f[0] + a.column[1].f[1]*b.f[1] + a.column[2].f[1]*b.f[2] + a.column[3].f[1]*b.f[3];
+    result.f[2] = a.column[0].f[2]*b.f[0] + a.column[1].f[2]*b.f[1] + a.column[2].f[2]*b.f[2] + a.column[3].f[2]*b.f[3];
+    result.f[3] = a.column[0].f[3]*b.f[0] + a.column[1].f[3]*b.f[1] + a.column[2].f[3]*b.f[2] + a.column[3].f[3]*b.f[3];
     return result;
   }
 

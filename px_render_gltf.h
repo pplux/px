@@ -43,7 +43,9 @@ namespace px_render {
         Geometry_Position   = 1<<0, // Vec3f
         Geometry_Normal     = 1<<1, // Vec3f
         Geometry_TexCoord0  = 1<<2, // Vec2f
-        // Material_DiffuseTex = 1<<3, (TODO)
+        ComputeBounds       = 1<<4,
+
+        // Material_DiffuseTex = 1<<5, (TODO)
 
         All = 0xFFFFFFFF
       };
@@ -54,11 +56,13 @@ namespace px_render {
     ~GLTF() { freeResources(); }
 
     struct Primitive {
-      uint32_t node;
-      uint32_t mesh;
-      uint32_t index_offset;
-      uint32_t index_count;
+      uint32_t node = 0;
+      uint32_t mesh = 0;
+      uint32_t index_offset = 0;
+      uint32_t index_count = 0;
       // uint32_t texture_diffuse;
+      Vec3 bounds_min = {0.0f, 0.0f, 0.0f};
+      Vec3 bounds_max = {0.0f, 0.0f, 0.0f};
     };
 
     struct Node {
@@ -75,6 +79,8 @@ namespace px_render {
     std::unique_ptr<Node[]> nodes;
     std::unique_ptr<Primitive[]> primitives;
     std::unique_ptr<Texture[]> textures;
+    Vec3 bounds_min = {0.0f, 0.0f, 0.0f};
+    Vec3 bounds_max = {0.0f, 0.0f, 0.0f};
   };
   
 }
@@ -247,7 +253,7 @@ namespace px_render {
         Node &node = nodes[current_node];
         // gather node transform or compute it
         if (gltf_n.matrix.size() == 16) {
-          for(size_t i = 0; i < 16; ++i) node.transform.f[i] = gltf_n.matrix[i];
+          for(size_t i = 0; i < 16; ++i) node.transform.f[i] = (float) gltf_n.matrix[i];
         } else {
           Vec3 s = {1.0f, 1.0f, 1.0f};
           Vec4 r = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -357,7 +363,7 @@ namespace px_render {
                     [base, byteStride, max_components](float *w, uint32_t p) {
                       const double*f = (const double*)(base + p*byteStride);
                       for (unsigned int i = 0; i < max_components; ++i) {
-                        w[i] = f[i];
+                        w[i] = (float)f[i];
                       }
                     }; break;
                   case TINYGLTF_COMPONENT_TYPE_BYTE: *writter =
@@ -413,6 +419,23 @@ namespace px_render {
                 for (uint32_t i = 0 ; i <= max_vertex_index-min_vertex_index; ++i) {
                   w_position(&vertex_data[vertex_offset+(current_vertex+i)*vertex_stride_float], i+min_vertex_index);
                 }
+                if (flags & Flags::ComputeBounds) {
+                  bounds_min = { FLT_MAX, FLT_MAX, FLT_MAX };
+                  bounds_max = { FLT_MIN, FLT_MIN, FLT_MIN };
+                  for (uint32_t i = 0; i <= max_vertex_index - min_vertex_index; ++i) {
+                    Vec3 v = *(const Vec3*)&vertex_data[vertex_offset + (current_vertex + i)*vertex_stride_float];
+                    Vec4 vt = Mat4::Mult(node.model, Vec4{ v.v.x, v.v.y, v.v.z, 1.0f });
+                    vt.v.x /= vt.v.w;
+                    vt.v.y /= vt.v.w;
+                    vt.v.z /= vt.v.w;
+                    primitive.bounds_min.v.x = std::min(primitive.bounds_min.v.x, vt.v.x);
+                    primitive.bounds_min.v.y = std::min(primitive.bounds_min.v.y, vt.v.y);
+                    primitive.bounds_min.v.z = std::min(primitive.bounds_min.v.z, vt.v.z);
+                    primitive.bounds_max.v.x = std::max(primitive.bounds_max.v.x, vt.v.x);
+                    primitive.bounds_max.v.y = std::max(primitive.bounds_max.v.y, vt.v.y);
+                    primitive.bounds_max.v.z = std::max(primitive.bounds_max.v.z, vt.v.z);
+                  }
+                }
                 vertex_offset += 3;
               }
               if (flags & Flags::Geometry_Normal) {
@@ -457,6 +480,21 @@ namespace px_render {
 
     num_nodes = total_nodes;
     num_primitives = total_primitives;
+    
+    if (flags & Flags::ComputeBounds) {
+      bounds_min = {FLT_MAX, FLT_MAX, FLT_MAX};
+      bounds_max = {FLT_MIN, FLT_MIN, FLT_MIN};
+      for (uint32_t i = 0; i < total_primitives; ++i) {
+        Vec3 bmin = primitives[i].bounds_min;
+        Vec3 bmax = primitives[i].bounds_max;
+        bounds_min.v.x = std::min(bounds_min.v.x, bmin.v.x);
+        bounds_min.v.y = std::min(bounds_min.v.y, bmin.v.y);
+        bounds_min.v.z = std::min(bounds_min.v.z, bmin.v.z);
+        bounds_max.v.x = std::max(bounds_max.v.x, bmax.v.x);
+        bounds_max.v.y = std::max(bounds_max.v.y, bmax.v.y);
+        bounds_max.v.z = std::max(bounds_max.v.z, bmax.v.z);
+      }
+    }
   }
 
   void GLTF::freeResources() {
