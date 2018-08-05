@@ -217,8 +217,8 @@ namespace px_render {
     }
 
     struct MaterialCache {
-      uint32_t num_textures = 0;
-      uint32_t num_materials = 0;
+      std::vector<GLTF::Texture> textures;
+      std::vector<GLTF::Material> materials;
 
       void load(const tinygltf::Model &model, int material_index);
 
@@ -229,6 +229,14 @@ namespace px_render {
     void MaterialCache::load(const tinygltf::Model &model, int material_index) {
       if (index.find(material_index) != index.end()) return;
       const tinygltf::Material &mat = model.materials[material_index];
+      GLTF::Material material;
+      material.name = mat.name;
+      const auto &pbr = mat.values.find("baseColorTexture");
+      if (pbr != mat.values.end()) {
+        fprintf(stderr, "FOUND!");
+      }
+      index[material_index] = materials.size();
+      materials.push_back(std::move(material));
     }
   }
 
