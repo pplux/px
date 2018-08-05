@@ -45,10 +45,8 @@ namespace px_render {
         Geometry_Position   = 1<<0, // Vec3f
         Geometry_Normal     = 1<<1, // Vec3f
         Geometry_TexCoord0  = 1<<2, // Vec2f
-        ComputeBounds       = 1<<4,
-
-        // Material_DiffuseTex = 1<<5, (TODO)
-
+        Material            = 1<<10,
+        ComputeBounds       = 1<<11,
         All = 0xFFFFFFFF
       };
     };
@@ -60,7 +58,7 @@ namespace px_render {
     struct Primitive {
       uint32_t node = 0;
       uint32_t mesh = 0;
-      uint32_t index_offset = 0;
+      uint32_t index_offset = 0; // in uint32_t units
       uint32_t index_count = 0;
       int32_t material = -1;
       Vec3 bounds_min = {0.0f, 0.0f, 0.0f}; // bounds in world coordinates
@@ -74,6 +72,7 @@ namespace px_render {
     };
 
     struct Material {
+      std::string name;
       struct {
         int32_t texture = -1;
         Vec4 factor = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -85,21 +84,16 @@ namespace px_render {
       } metallic_roughness;
       struct {
         int32_t texture = -1;
-        float factor = 1.0f; // scale
+        float factor = 1.0f; // normal-scale
       } normal;
       struct {
         int32_t texture = -1;
-        float factor = 1.0f; //strength
+        float factor = 1.0f; // occlusion-strength
       } occlusion;
       struct {
         int32_t texture = -1;
         Vec3 factor = {1.0f, 1.0f, 1.0f};
       } emmisive;
-
-      int32_t normal_texture = -1;
-      int32_t occlusion_texture = -1;
-      int32_t emissive_texture = -1;
-      Vec3 emissive_factor = {1.0f, 1.0f, 1.0f};
     };
 
     struct Texture {
@@ -221,6 +215,21 @@ namespace px_render {
         output[i] = v[i];
       }
     }
+
+    struct MaterialCache {
+      uint32_t num_textures = 0;
+      uint32_t num_materials = 0;
+
+      void load(const tinygltf::Model &model, int material_index);
+
+      std::map<uint32_t, uint32_t> index;
+    };
+
+
+    void MaterialCache::load(const tinygltf::Model &model, int material_index) {
+      if (index.find(material_index) != index.end()) return;
+      const tinygltf::Material &mat = model.materials[material_index];
+    }
   }
 
   void GLTF::init(RenderContext *_ctx, const tinygltf::Model &model, uint32_t flags) {
@@ -231,6 +240,8 @@ namespace px_render {
     uint32_t total_primitives = 0;
     uint32_t total_num_vertices = 0;
     uint32_t total_num_indices = 0;
+    GLTF_Imp::MaterialCache material_cache;
+
     uint32_t const vertex_size = 0
       + (flags&Flags::Geometry_Position?  sizeof(float)*3: 0)
       + (flags&Flags::Geometry_Normal?    sizeof(float)*3: 0)
@@ -238,7 +249,7 @@ namespace px_render {
       ;
 
     GLTF_Imp::NodeTraverse(model,
-      [&total_nodes, &total_primitives, &total_num_vertices, &total_num_indices]
+      [&total_nodes, &total_primitives, &total_num_vertices, &total_num_indices, flags, &material_cache]
       (const tinygltf::Model model, uint32_t n_pos, uint32_t p_pos) {
       const tinygltf::Node &n = model.nodes[n_pos];
       total_nodes++;
@@ -261,6 +272,13 @@ namespace px_render {
                 total_num_indices++;
             });
             total_num_vertices += (max_vertex_index - min_vertex_index +1);
+
+            if (flags & Flags::Material) {
+              if (primitive.material >= 0) {
+                material_cache.load(model, primitive.material);
+              }
+            }
+
             total_primitives++;
           }
         }
@@ -287,6 +305,7 @@ namespace px_render {
     GLTF_Imp::NodeTraverse(model,
       [&current_node, &current_primitive, &node_map, &current_mesh,
        &current_vertex, &current_index, &index_data, &vertex_data,
+       &material_cache,
        total_nodes, total_primitives, total_num_vertices, vertex_size, flags, this]
       (const tinygltf::Model &model, uint32_t n_pos, uint32_t p_pos) mutable {
         const tinygltf::Node &gltf_n = model.nodes[n_pos];
@@ -352,6 +371,12 @@ namespace px_render {
               primitive.index_count = index_count;
               primitive.index_offset = current_index;
               current_index += index_count;
+
+              if (flags & Flags::Material) {
+                if (gltf_p.material >= 0) {
+                  primitive.material = material_cache.index[gltf_p.material];
+                }
+              }
 
               using AttribWritter = std::function<void(float *w, uint32_t p)> ;
 
