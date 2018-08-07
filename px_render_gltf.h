@@ -222,6 +222,49 @@ namespace px_render {
 
       void load(const tinygltf::Model &model, int material_index);
 
+      int32_t texture(const tinygltf::Model &model, const tinygltf::Material &mat, const char *name) {
+        const auto &i = mat.values.find(name);
+        if (i != mat.values.end()) {
+          return 1;
+        }
+        return -1;
+      }
+      float texture_scale(const tinygltf::Model &model, const tinygltf::Material &mat, const char *name) {
+        const auto &i = mat.values.find(name);
+        if (i != mat.values.end()) {
+          float f = i->second.Factor();
+          return f;
+        }
+        return 1.0f;
+      }
+      Vec4 factor4(const tinygltf::Model &model, const tinygltf::Material &mat, const char *name, float df) {
+        const auto &i= mat.values.find(name);
+        if (i != mat.values.end()) {
+          auto cf = i->second.ColorFactor();
+          return Vec4 { 
+            (float)cf[0], (float)cf[1], (float)cf[2], (float)cf[3],
+          };
+        }
+        return Vec4{df,df,df,df};
+      }
+      Vec3 factor3(const tinygltf::Model &model, const tinygltf::Material &mat, const char *name, float df) {
+        const auto &i= mat.values.find(name);
+        if (i != mat.values.end()) {
+          auto cf = i->second.ColorFactor();
+          return Vec3 { 
+            (float)cf[0], (float)cf[1], (float)cf[2]
+          };
+        }
+        return Vec3{df,df,df};
+      }
+      float factor1(const tinygltf::Model &model, const tinygltf::Material &mat, const char *name, float df) {
+        const auto &i= mat.values.find(name);
+        if (i != mat.values.end()) {
+          return i->second.Factor();
+        }
+        return df;
+      }
+
       std::map<uint32_t, uint32_t> index;
     };
 
@@ -231,10 +274,16 @@ namespace px_render {
       const tinygltf::Material &mat = model.materials[material_index];
       GLTF::Material material;
       material.name = mat.name;
-      const auto &pbr = mat.values.find("baseColorTexture");
-      if (pbr != mat.values.end()) {
-        fprintf(stderr, "FOUND!");
-      }
+      material.base_color.texture = texture(model, mat, "baseColorTexture");
+      material.base_color.factor = factor4(model, mat, "baseColorFactor", 1.0f);
+      material.emmisive.texture = texture(model, mat, "emissiveTexture");
+      material.emmisive.factor = factor3(model, mat, "emissiveFactor",0.0f);
+      material.metallic_roughness.texture = texture(model, mat, "metallicRoughnessTexture");
+      material.metallic_roughness.metallic_factor = factor1(model, mat, "metallicFactor", 0.5f);
+      material.metallic_roughness.roughness_factor = factor1(model, mat, "roughnessFactor", 0.5f);
+      material.normal.texture = texture(model,mat, "normalTexture");
+      material.normal.factor = texture_scale(model, mat, "normalTexture");
+
       index[material_index] = materials.size();
       materials.push_back(std::move(material));
     }
