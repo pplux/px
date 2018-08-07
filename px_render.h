@@ -484,7 +484,7 @@ namespace px_render {
     // internally. This is optional as long as you submit displaylist immediately after
     // they are filled. If you plan to store a display list you must call finish to ensure
     // all data is copied.
-    void finish();
+    void commitLastCommand();
 
     // -- Add then modify API --------------------------------
     // *WARNING* the result reference of these methods is only
@@ -1140,7 +1140,7 @@ namespace px_render {
     data_->reset();
   }
 
-  void DisplayList::finish() {
+  void DisplayList::commitLastCommand() {
     PatchLastDisplayListCommand(data_);
   }
 

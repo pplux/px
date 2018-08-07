@@ -22,22 +22,24 @@ void init(px_render::RenderContext *ctx, px_sched::Scheduler *sched) {
     in vec3 position;
     in vec3 normal;
     in vec2 uv;
-    out vec3 v_color;
+    out vec2 v_tex;
     void main() {
       gl_Position = u_viewProjection * vec4(position,1.0);
-      v_color = normal;
+      v_tex = uv;
     }
   );
   pipeline_info.shader.fragment = GLSL(
-    in vec3 v_color;
     out vec4 color_out;
+    in vec2 v_tex;
+    uniform sampler2D u_tex0;
     void main() {
-      color_out = vec4(v_color,1.0);
+      color_out = texture(u_tex0, v_tex);
     }
   );
   pipeline_info.attribs[0] = {"position", VertexFormat::Float3};
   pipeline_info.attribs[1] = {"normal", VertexFormat::Float3};
   pipeline_info.attribs[2] = {"uv", VertexFormat::Float2};
+  pipeline_info.textures[0] = TextureType::T2D;
   State.material = ctx->createPipeline(pipeline_info);
 
   sched->run([ctx]{
@@ -45,7 +47,7 @@ void init(px_render::RenderContext *ctx, px_sched::Scheduler *sched) {
     tinygltf::Model model;
     std::string err;
     std::string warning;
-    if (!loader.LoadASCIIFromFile(&model, &err, &warning, "t1/Scene.gltf")) {
+    if (!loader.LoadASCIIFromFile(&model, &err, &warning, "t2/Scene.gltf")) {
       fprintf(stderr,"Error loading GLTF %s", err.c_str());
       assert(!"GLTF_ERROR");
     }
@@ -84,10 +86,12 @@ void render(px_render::RenderContext *ctx, px_sched::Scheduler *sched) {
     for(uint32_t i = 0; i < State.gltf.num_primitives; ++i) {
       const auto &node_idx = State.gltf.primitives[i].node;
       const auto &model = State.gltf.nodes[node_idx].model;
+      const auto &material = State.gltf.materials[State.gltf.primitives[i].material];
       dl.setupPipelineCommand()
         .set_pipeline(State.material)
         .set_buffer(0,State.gltf.vertex_buffer)
         .set_model_matrix(model)
+        .set_texture(0, State.gltf.textures[material.base_color.texture].tex);
         ;
       dl.renderCommand()
         .set_index_buffer(State.gltf.index_buffer)

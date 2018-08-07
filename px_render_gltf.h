@@ -234,6 +234,37 @@ namespace px_render {
         return mat.values.end();
       }
 
+      static SamplerFiltering::Enum TranslateFiltering(int i) {
+        switch (i) {
+        case TINYGLTF_TEXTURE_FILTER_LINEAR:
+          return SamplerFiltering::Linear;
+        case TINYGLTF_TEXTURE_FILTER_NEAREST:
+          return SamplerFiltering::Nearest;
+        case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR:
+          return SamplerFiltering::LinearMipmapLinear;
+        case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_NEAREST:
+          return SamplerFiltering::LinearMipmapNearest;
+        case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_LINEAR:
+          return SamplerFiltering::NearestMipmapLinear;
+        case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_NEAREST:
+          return SamplerFiltering::NearestMipmapNearest;
+        }
+        return SamplerFiltering::Linear; // (default?)
+
+      }
+
+      static SamplerWrapping::Enum TranslateWrapping(int i) {
+        switch (i) {
+        case TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE:
+          return SamplerWrapping::Clamp;
+        case TINYGLTF_TEXTURE_WRAP_MIRRORED_REPEAT:
+          return SamplerWrapping::MirroredRepeat;
+        case TINYGLTF_TEXTURE_WRAP_REPEAT:
+          return SamplerWrapping::Repeat;
+        }
+        return SamplerWrapping::Clamp; // (default?)
+      }
+
       int32_t texture(px_render::RenderContext *ctx, const tinygltf::Model &model, const tinygltf::Material &mat, const char *name) {
         bool found;
         auto i = find(model, mat, name, &found);
@@ -245,17 +276,21 @@ namespace px_render {
             // extract texture data from model, first, then search for
             // existing texture in array
             const tinygltf::Texture &tex = model.textures[gltf_texture_pos];
-            int sampler = tex.sampler;
-            int source = tex.source;
-            auto found = texture_index.find(std::make_pair(source, sampler));
+            int sampler_idx = tex.sampler;
+            int source_idx = tex.source;
+            auto found = texture_index.find(std::make_pair(source_idx, sampler_idx));
             if (found != texture_index.end()) {
               return found->second;
             }
             // new one
             GLTF::Texture new_texture;
-            const tinygltf::Image &image = model.images[source];
+            const tinygltf::Image &image = model.images[source_idx];
             new_texture.info.width = image.width;
             new_texture.info.height = image.height;
+            new_texture.info.depth = 1;
+            new_texture.info.type = TextureType::T2D;
+            new_texture.info.usage = Usage::Static;
+
             switch(image.component) {
               case 1: new_texture.info.format = px_render::TexelsFormat::R_U8; break;
               case 2: new_texture.info.format = px_render::TexelsFormat::RG_U8; break;
@@ -264,14 +299,22 @@ namespace px_render {
               default:
                 assert(!"Invalid format...");
             }
-            // sampler data...TODO
+            // sampler data...
+            const tinygltf::Sampler &sampler = model.samplers[sampler_idx];
+            new_texture.info.magnification_filter = TranslateFiltering(sampler.magFilter);
+            new_texture.info.minification_filter  = TranslateFiltering(sampler.minFilter);
+            new_texture.info.wrapping[0] = TranslateWrapping(sampler.wrapR);
+            new_texture.info.wrapping[1] = TranslateWrapping(sampler.wrapS);
+            new_texture.info.wrapping[2] = TranslateWrapping(sampler.wrapT);
+
             new_texture.tex = ctx->createTexture(new_texture.info);
-            texture_dl.fillTextureCommand().set_texture(new_texture.tex).set_data(&image.image[0]);
+            texture_dl.fillTextureCommand().set_texture(new_texture.tex).set_data(&image.image[0]).set_build_mipmap(true);
+            texture_dl.commitLastCommand();
 
             // store
             int32_t new_texture_index = textures.size();
             textures.push_back(std::move(new_texture));
-            texture_index[std::make_pair(source, sampler)] = new_texture_index;
+            texture_index[std::make_pair(source_idx, sampler_idx)] = new_texture_index;
             return new_texture_index;
           }
         }
@@ -640,6 +683,14 @@ namespace px_render {
         current_node++;
     });
 
+    num_textures = material_cache.textures.size();
+    num_materials = material_cache.materials.size();
+    textures = std::unique_ptr<Texture[]>(new Texture[num_textures]);
+    materials = std::unique_ptr<Material[]>(new Material[num_materials]);
+    for(uint32_t i = 0; i < num_textures; ++i) { textures[i] = material_cache.textures[i]; }
+    for(uint32_t i = 0; i < num_materials; ++i) { materials[i] = material_cache.materials[i]; }
+
+    ctx->submitDisplayList(std::move(material_cache.texture_dl));
     DisplayList dl;
     vertex_buffer = ctx->createBuffer({BufferType::Vertex, vertex_size*total_num_vertices, Usage::Static});
     index_buffer  = ctx->createBuffer({BufferType::Index, sizeof(uint32_t)*total_num_indices, Usage::Static});
