@@ -45,7 +45,7 @@ void init(px_render::RenderContext *ctx, px_sched::Scheduler *sched) {
     tinygltf::Model model;
     std::string err;
     std::string warning;
-    if (!loader.LoadASCIIFromFile(&model, &err, &warning, "t2/Scene.gltf")) {
+    if (!loader.LoadASCIIFromFile(&model, &err, &warning, "t1/Scene.gltf")) {
       fprintf(stderr,"Error loading GLTF %s", err.c_str());
       assert(!"GLTF_ERROR");
     }

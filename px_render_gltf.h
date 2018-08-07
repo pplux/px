@@ -98,8 +98,8 @@ namespace px_render {
 
     struct Texture {
       std::string uri;
-      px_render::Texture::Info info; //> partially filled with sampler data
-      px_render::Texture tex; //> empty, just for convenience, so you can fill with proper texture
+      px_render::Texture::Info info;
+      px_render::Texture tex;
     };
 
     RenderContext *ctx = nullptr;
@@ -217,29 +217,82 @@ namespace px_render {
     }
 
     struct MaterialCache {
+      // matp between GLTF materials, and px_render materials
+      std::map<uint32_t, uint32_t> index;
       std::vector<GLTF::Texture> textures;
       std::vector<GLTF::Material> materials;
+      std::map<std::pair<int,int>, uint32_t> texture_index;
+      px_render::DisplayList texture_dl;
 
-      void load(const tinygltf::Model &model, int material_index);
+      auto find(const tinygltf::Model &model, const tinygltf::Material &mat, const char *name, bool *found) -> decltype(mat.values.find(name)) {
+        *found = true;
+        auto const &i = mat.values.find(name);
+        if (i != mat.values.end()) return i;
+        auto const &ai = mat.additionalValues.find(name);
+        if (ai != mat.additionalValues.end()) return ai;
+        *found = false;
+        return mat.values.end();
+      }
 
-      int32_t texture(const tinygltf::Model &model, const tinygltf::Material &mat, const char *name) {
-        const auto &i = mat.values.find(name);
-        if (i != mat.values.end()) {
-          return 1;
+      int32_t texture(px_render::RenderContext *ctx, const tinygltf::Model &model, const tinygltf::Material &mat, const char *name) {
+        bool found;
+        auto i = find(model, mat, name, &found);
+        if (found) {
+          const auto &j = i->second.json_double_value.find("index");
+          if (j != i->second.json_double_value.end()) {
+            int gltf_texture_pos = (int) j->second;
+            assert(gltf_texture_pos >= 0 && "Invalid texture index");
+            // extract texture data from model, first, then search for
+            // existing texture in array
+            const tinygltf::Texture &tex = model.textures[gltf_texture_pos];
+            int sampler = tex.sampler;
+            int source = tex.source;
+            auto found = texture_index.find(std::make_pair(source, sampler));
+            if (found != texture_index.end()) {
+              return found->second;
+            }
+            // new one
+            GLTF::Texture new_texture;
+            const tinygltf::Image &image = model.images[source];
+            new_texture.info.width = image.width;
+            new_texture.info.height = image.height;
+            switch(image.component) {
+              case 1: new_texture.info.format = px_render::TexelsFormat::R_U8; break;
+              case 2: new_texture.info.format = px_render::TexelsFormat::RG_U8; break;
+              case 3: new_texture.info.format = px_render::TexelsFormat::RGB_U8; break;
+              case 4: new_texture.info.format = px_render::TexelsFormat::RGBA_U8; break;
+              default:
+                assert(!"Invalid format...");
+            }
+            // sampler data...TODO
+            new_texture.tex = ctx->createTexture(new_texture.info);
+            texture_dl.fillTextureCommand().set_texture(new_texture.tex).set_data(&image.image[0]);
+
+            // store
+            int32_t new_texture_index = textures.size();
+            textures.push_back(std::move(new_texture));
+            texture_index[std::make_pair(source, sampler)] = new_texture_index;
+            return new_texture_index;
+          }
         }
         return -1;
       }
+
       float texture_scale(const tinygltf::Model &model, const tinygltf::Material &mat, const char *name) {
-        const auto &i = mat.values.find(name);
-        if (i != mat.values.end()) {
-          float f = i->second.Factor();
-          return f;
+        bool found;
+        auto i = find(model, mat, name, &found);
+        if (found) {
+          const auto &j = i->second.json_double_value.find("scale");
+          if (j != i->second.json_double_value.end()) {
+            return j->second;
+          }
         }
         return 1.0f;
       }
       Vec4 factor4(const tinygltf::Model &model, const tinygltf::Material &mat, const char *name, float df) {
-        const auto &i= mat.values.find(name);
-        if (i != mat.values.end()) {
+        bool found;
+        auto i = find(model, mat, name, &found);
+        if (found) {
           auto cf = i->second.ColorFactor();
           return Vec4 { 
             (float)cf[0], (float)cf[1], (float)cf[2], (float)cf[3],
@@ -248,8 +301,9 @@ namespace px_render {
         return Vec4{df,df,df,df};
       }
       Vec3 factor3(const tinygltf::Model &model, const tinygltf::Material &mat, const char *name, float df) {
-        const auto &i= mat.values.find(name);
-        if (i != mat.values.end()) {
+        bool found;
+        auto i = find(model, mat, name, &found);
+        if (found) {
           auto cf = i->second.ColorFactor();
           return Vec3 { 
             (float)cf[0], (float)cf[1], (float)cf[2]
@@ -258,36 +312,35 @@ namespace px_render {
         return Vec3{df,df,df};
       }
       float factor1(const tinygltf::Model &model, const tinygltf::Material &mat, const char *name, float df) {
-        const auto &i= mat.values.find(name);
-        if (i != mat.values.end()) {
+        bool found;
+        auto i = find(model, mat, name, &found);
+        if (found) {
           return i->second.Factor();
         }
         return df;
       }
 
-      std::map<uint32_t, uint32_t> index;
-    };
 
+      void load(px_render::RenderContext*ctx, const tinygltf::Model &model, int material_index) {
+        if (index.find(material_index) != index.end()) return;
+        const tinygltf::Material &mat = model.materials[material_index];
+        GLTF::Material material;
+        material.name = mat.name;
+        material.base_color.texture = texture(ctx, model, mat, "baseColorTexture");
+        material.base_color.factor = factor4(model, mat, "baseColorFactor", 1.0f);
+        material.emmisive.texture = texture(ctx, model, mat, "emissiveTexture");
+        material.emmisive.factor = factor3(model, mat, "emissiveFactor",0.0f);
+        material.metallic_roughness.texture = texture(ctx, model, mat, "metallicRoughnessTexture");
+        material.metallic_roughness.metallic_factor = factor1(model, mat, "metallicFactor", 0.5f);
+        material.metallic_roughness.roughness_factor = factor1(model, mat, "roughnessFactor", 0.5f);
+        material.normal.texture = texture(ctx, model,mat, "normalTexture");
+        material.normal.factor = texture_scale(model, mat, "normalTexture");
 
-    void MaterialCache::load(const tinygltf::Model &model, int material_index) {
-      if (index.find(material_index) != index.end()) return;
-      const tinygltf::Material &mat = model.materials[material_index];
-      GLTF::Material material;
-      material.name = mat.name;
-      material.base_color.texture = texture(model, mat, "baseColorTexture");
-      material.base_color.factor = factor4(model, mat, "baseColorFactor", 1.0f);
-      material.emmisive.texture = texture(model, mat, "emissiveTexture");
-      material.emmisive.factor = factor3(model, mat, "emissiveFactor",0.0f);
-      material.metallic_roughness.texture = texture(model, mat, "metallicRoughnessTexture");
-      material.metallic_roughness.metallic_factor = factor1(model, mat, "metallicFactor", 0.5f);
-      material.metallic_roughness.roughness_factor = factor1(model, mat, "roughnessFactor", 0.5f);
-      material.normal.texture = texture(model,mat, "normalTexture");
-      material.normal.factor = texture_scale(model, mat, "normalTexture");
-
-      index[material_index] = materials.size();
-      materials.push_back(std::move(material));
-    }
-  }
+        index[material_index] = materials.size();
+        materials.push_back(std::move(material));
+      }
+    }; // Material Cache
+  } // GLTF_Imp
 
   void GLTF::init(RenderContext *_ctx, const tinygltf::Model &model, uint32_t flags) {
     freeResources();
@@ -306,7 +359,7 @@ namespace px_render {
       ;
 
     GLTF_Imp::NodeTraverse(model,
-      [&total_nodes, &total_primitives, &total_num_vertices, &total_num_indices, flags, &material_cache]
+      [&total_nodes, &total_primitives, &total_num_vertices, &total_num_indices, flags, _ctx, &material_cache]
       (const tinygltf::Model model, uint32_t n_pos, uint32_t p_pos) {
       const tinygltf::Node &n = model.nodes[n_pos];
       total_nodes++;
@@ -332,7 +385,7 @@ namespace px_render {
 
             if (flags & Flags::Material) {
               if (primitive.material >= 0) {
-                material_cache.load(model, primitive.material);
+                material_cache.load(_ctx, model, primitive.material);
               }
             }
 
