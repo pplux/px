@@ -1,29 +1,39 @@
-// ImGui Renderer for: px_render
-// This needs to be used along with a Platform Binding (e.g. GLFW, SDL, Win32, custom..)
-// (Note: We are using GL3W as a helper library to access OpenGL functions since there is no standard header to access modern OpenGL functions easily. Alternatives are GLEW, Glad, etc..)
-
-// Implemented features:
-//  [X] Renderer: User texture binding. Use Pointer to Texture Object ImTextureID. Read the FAQ about ImTextureID in imgui.cpp.
-
-// You can copy and use unmodified imgui_impl_* files in your project. See main.cpp for an example of using this.
-// If you are new to dear imgui, read examples/README.txt and read the documentation at the top of imgui.cpp.
-// https://github.com/ocornut/imgui
-
+// ImGui Renderer for: px_render 
+// USAGE
+//
+// In *ONE* C++ file you need to declare
+// #define PX_RENDER_IMGUI_IMPLEMENTATION
+// before including the file that contains px_render_imgui.h
+// 
+// px_render_imgui must be included *AFTER* px_render and imgui.h
+//
 // CHANGELOG 
 // (minor and older changes stripped away, please see git history for details)
 //  2018-07-09: Initial version
+//  2018-08-22: Refactorized into a single-header plugin
+
+namespace px_render {
+  struct RenderContext;
+  struct DisplayList;
+}
+
+IMGUI_IMPL_API void     ImGui_Impl_pxrender_Init(px_render::RenderContext *ctx);
+IMGUI_IMPL_API void     ImGui_Impl_pxrender_Shutdown();
+IMGUI_IMPL_API void     ImGui_Impl_pxrender_RenderDrawData(ImDrawData* draw_data, px_render::DisplayList *dl_output);
+
+//-- IMPLEMENTATION ----------------------------------------------------------
+
+#ifdef PX_RENDER_IMGUI_IMPLEMENTATION
+
+#ifndef PX_RENDER
+#error px_render must be included before px_render_imgui (because imgui plugin does not include px_render.h)
+#endif
 
 #if defined(_MSC_VER) && !defined(_CRT_SECURE_NO_WARNINGS)
 #define _CRT_SECURE_NO_WARNINGS
 #endif
 
 #include <cassert>
-#include "imgui.h"
-#include "imgui_impl_pxrender.h"
-
-#include "../../px_render.h"
-
-//#include <GL/gl3w.h>    // This example is using gl3w to access OpenGL functions. You may use another OpenGL loader/header such as: glew, glext, glad, glLoadGen, etc.
 
 static struct {
   px_render::RenderContext *ctx = nullptr;
@@ -205,3 +215,5 @@ void ImGui_Impl_pxrender_RenderDrawData(ImDrawData* draw_data, px_render::Displa
 }
 
 #undef PX_RENDER_IMGUI_GLSL
+
+#endif // PX_RENDER_IMGUI_IMPLEMENTATION

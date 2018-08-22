@@ -26,18 +26,20 @@
 #  endif
 #endif
 
+#include "../deps/imgui.h"
+
 // gb_math, sokol, px_render & px_sched implementations
 #define GB_MATH_IMPLEMENTATION
 #define SOKOL_IMPL
-#define PX_RENDER_IMPLEMENTATION
-#define PX_SCHED_IMPLEMENTATION
-
-#include "../../px_render.h"
-#include "../../px_sched.h"
 #include "../deps/gb_math.h"
 #include "../deps/sokol_app.h"
-#include "../deps/imgui.h"
-#include "../deps/imgui_impl_pxrender.h"
+
+#define PX_RENDER_IMPLEMENTATION
+#define PX_RENDER_IMGUI_IMPLEMENTATION
+#define PX_SCHED_IMPLEMENTATION
+#include "../../px_render.h"
+#include "../../px_sched.h"
+#include "../../px_render_imgui.h"
 
 #ifdef Always
 #undef Always // linux: X11.h --> WTF
@@ -50,7 +52,6 @@ void render(px_render::RenderContext *ctx, px_sched::Scheduler *sched);
 
 #include "../deps/imgui.cpp"
 #include "../deps/imgui_draw.cpp"
-#include "../deps/imgui_impl_pxrender.cpp"
 
 struct {
   px_render::RenderContext ctx;
