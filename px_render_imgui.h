@@ -81,7 +81,7 @@ void ImGui_Impl_pxrender_Init(px_render::RenderContext *ctx) {
     in vec4 frag_color;
     out vec4 color;
     void main() {
-      color = vec4(frag_color.rgb, texture(u_tex0, frag_uv).r*frag_color.a);
+      color = texture(u_tex0, frag_uv)*frag_color;
     }
   );
   pinfo.attribs[0] = {"pos", VertexFormat::Float2};
@@ -100,11 +100,11 @@ void ImGui_Impl_pxrender_Init(px_render::RenderContext *ctx) {
   // -- Default font texture -----------------------------------------------
   int font_width, font_height;
   unsigned char *font_pixels;
-  ::ImGui::GetIO().Fonts->GetTexDataAsAlpha8(&font_pixels, &font_width, &font_height);
+  ::ImGui::GetIO().Fonts->GetTexDataAsRGBA32(&font_pixels, &font_width, &font_height);
   Texture::Info tinfo;
   tinfo.width = font_width;
   tinfo.height = font_height;
-  tinfo.format = TexelsFormat::R_U8;
+  tinfo.format = TexelsFormat::RGBA_U8;
   PRS.font = PRS.ctx->createTexture(tinfo);
   DisplayList tex_dl;
   tex_dl.fillTextureCommand()
