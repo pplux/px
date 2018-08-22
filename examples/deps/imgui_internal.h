@@ -36,32 +36,33 @@
 struct ImRect;                      // An axis-aligned rectangle (2 points)
 struct ImDrawDataBuilder;           // Helper to build a ImDrawData instance
 struct ImDrawListSharedData;        // Data shared between all ImDrawList instances
-struct ImGuiColMod;                 // Stacked color modifier, backup of modified data so we can restore it
+struct ImGuiColorMod;               // Stacked color modifier, backup of modified data so we can restore it
 struct ImGuiColumnData;             // Storage data for a single column
 struct ImGuiColumnsSet;             // Storage data for a columns set
 struct ImGuiContext;                // Main imgui context
 struct ImGuiGroupData;              // Stacked storage data for BeginGroup()/EndGroup()
+struct ImGuiInputTextState;         // Internal state of the currently focused/edited text input box
 struct ImGuiItemHoveredDataBackup;  // Backup and restore IsItemHovered() internal data
 struct ImGuiMenuColumns;            // Simple column measurement, currently used for MenuItem() only
 struct ImGuiNavMoveResult;          // Result of a directional navigation move query result
 struct ImGuiNextWindowData;         // Storage for SetNexWindow** functions
 struct ImGuiPopupRef;               // Storage for current popup stack
-struct ImGuiSettingsHandler;
+struct ImGuiSettingsHandler;        // Storage for one type registered in the .ini file
 struct ImGuiStyleMod;               // Stacked style modifier, backup of modified data so we can restore it
-struct ImGuiTextEditState;          // Internal state of the currently focused/edited text input box
 struct ImGuiWindow;                 // Storage for one window
-struct ImGuiWindowTempData;         // Temporary storage for one, that's the data which in theory we could ditch at the end of the frame
+struct ImGuiWindowTempData;         // Temporary storage for one window (that's the data which in theory we could ditch at the end of the frame)
 struct ImGuiWindowSettings;         // Storage for window settings stored in .ini file (we keep one of those even if the actual window wasn't instanced during this session)
 
-typedef int ImGuiLayoutType;        // enum: horizontal or vertical             // enum ImGuiLayoutType_
-typedef int ImGuiButtonFlags;       // flags: for ButtonEx(), ButtonBehavior()  // enum ImGuiButtonFlags_
-typedef int ImGuiItemFlags;         // flags: for PushItemFlag()                // enum ImGuiItemFlags_
-typedef int ImGuiItemStatusFlags;   // flags: storage for DC.LastItemXXX        // enum ImGuiItemStatusFlags_
-typedef int ImGuiNavHighlightFlags; // flags: for RenderNavHighlight()          // enum ImGuiNavHighlightFlags_
-typedef int ImGuiNavDirSourceFlags; // flags: for GetNavInputAmount2d()         // enum ImGuiNavDirSourceFlags_
-typedef int ImGuiNavMoveFlags;      // flags: for navigation requests           // enum ImGuiNavMoveFlags_
-typedef int ImGuiSeparatorFlags;    // flags: for Separator() - internal        // enum ImGuiSeparatorFlags_
-typedef int ImGuiSliderFlags;       // flags: for SliderBehavior()              // enum ImGuiSliderFlags_
+// Use your programming IDE "Go to definition" facility on the names of the center columns to find the actual flags/enum lists.
+typedef int ImGuiLayoutType;        // -> enum ImGuiLayoutType_        // Enum: Horizontal or vertical
+typedef int ImGuiButtonFlags;       // -> enum ImGuiButtonFlags_       // Flags: for ButtonEx(), ButtonBehavior()
+typedef int ImGuiItemFlags;         // -> enum ImGuiItemFlags_         // Flags: for PushItemFlag()
+typedef int ImGuiItemStatusFlags;   // -> enum ImGuiItemStatusFlags_   // Flags: for DC.LastItemStatusFlags
+typedef int ImGuiNavHighlightFlags; // -> enum ImGuiNavHighlightFlags_ // Flags: for RenderNavHighlight()
+typedef int ImGuiNavDirSourceFlags; // -> enum ImGuiNavDirSourceFlags_ // Flags: for GetNavInputAmount2d()
+typedef int ImGuiNavMoveFlags;      // -> enum ImGuiNavMoveFlags_      // Flags: for navigation requests
+typedef int ImGuiSeparatorFlags;    // -> enum ImGuiSeparatorFlags_    // Flags: for Separator() - internal
+typedef int ImGuiSliderFlags;       // -> enum ImGuiSliderFlags_       // Flags: for SliderBehavior()
 
 //-------------------------------------------------------------------------
 // STB libraries
@@ -72,7 +73,7 @@ namespace ImGuiStb
 
 #undef STB_TEXTEDIT_STRING
 #undef STB_TEXTEDIT_CHARTYPE
-#define STB_TEXTEDIT_STRING             ImGuiTextEditState
+#define STB_TEXTEDIT_STRING             ImGuiInputTextState
 #define STB_TEXTEDIT_CHARTYPE           ImWchar
 #define STB_TEXTEDIT_GETWIDTH_NEWLINE   -1.0f
 #include "stb_textedit.h"
@@ -107,10 +108,11 @@ extern IMGUI_API ImGuiContext* GImGui;  // Current implicit ImGui context pointe
 
 // Helpers: UTF-8 <> wchar
 IMGUI_API int           ImTextStrToUtf8(char* buf, int buf_size, const ImWchar* in_text, const ImWchar* in_text_end);      // return output UTF-8 bytes count
-IMGUI_API int           ImTextCharFromUtf8(unsigned int* out_char, const char* in_text, const char* in_text_end);          // return input UTF-8 bytes count
+IMGUI_API int           ImTextCharFromUtf8(unsigned int* out_char, const char* in_text, const char* in_text_end);          // read one character. return input UTF-8 bytes count
 IMGUI_API int           ImTextStrFromUtf8(ImWchar* buf, int buf_size, const char* in_text, const char* in_text_end, const char** in_remaining = NULL);   // return input UTF-8 bytes count
 IMGUI_API int           ImTextCountCharsFromUtf8(const char* in_text, const char* in_text_end);                            // return number of UTF-8 code-points (NOT bytes count)
-IMGUI_API int           ImTextCountUtf8BytesFromStr(const ImWchar* in_text, const ImWchar* in_text_end);                   // return number of bytes to express string as UTF-8 code-points
+IMGUI_API int           ImTextCountUtf8BytesFromChar(const char* in_text, const char* in_text_end);                        // return number of bytes to express one char in UTF-8
+IMGUI_API int           ImTextCountUtf8BytesFromStr(const ImWchar* in_text, const ImWchar* in_text_end);                   // return number of bytes to express string in UTF-8
 
 // Helpers: Misc
 IMGUI_API ImU32         ImHash(const void* data, int data_size, ImU32 seed = 0);    // Pass data_size==0 for zero-terminated strings
@@ -266,7 +268,8 @@ enum ImGuiItemStatusFlags_
 {
     ImGuiItemStatusFlags_None               = 0,
     ImGuiItemStatusFlags_HoveredRect        = 1 << 0,
-    ImGuiItemStatusFlags_HasDisplayRect     = 1 << 1
+    ImGuiItemStatusFlags_HasDisplayRect     = 1 << 1,
+    ImGuiItemStatusFlags_ValueChanged       = 1 << 2    // Value exposed by item was edited in the current frame (should match the bool return value of most widgets)
 };
 
 // FIXME: this is in development, not exposed/functional as a generic feature yet.
@@ -382,7 +385,7 @@ struct IMGUI_API ImRect
 };
 
 // Stacked color modifier, backup of modified data so we can restore it
-struct ImGuiColMod
+struct ImGuiColorMod
 {
     ImGuiCol    Col;
     ImVec4      BackupValue;
@@ -408,7 +411,7 @@ struct ImGuiGroupData
     float       BackupCurrentLineHeight;
     float       BackupCurrentLineTextBaseOffset;
     float       BackupLogLinePosY;
-    bool        BackupActiveIdIsAlive;
+    ImGuiID     BackupActiveIdIsAlive;
     bool        BackupActiveIdPreviousFrameIsAlive;
     bool        AdvanceCursor;
 };
@@ -428,27 +431,32 @@ struct IMGUI_API ImGuiMenuColumns
 };
 
 // Internal state of the currently focused/edited text input box
-struct IMGUI_API ImGuiTextEditState
+struct IMGUI_API ImGuiInputTextState
 {
-    ImGuiID             Id;                         // widget id owning the text state
-    ImVector<ImWchar>   Text;                       // edit buffer, we need to persist but can't guarantee the persistence of the user-provided buffer. so we copy into own buffer.
-    ImVector<char>      InitialText;                // backup of end-user buffer at the time of focus (in UTF-8, unaltered)
-    ImVector<char>      TempTextBuffer;
-    int                 CurLenA, CurLenW;           // we need to maintain our buffer length in both UTF-8 and wchar format.
-    int                 BufSizeA;                   // end-user buffer size
-    float               ScrollX;
-    ImGuiStb::STB_TexteditState   StbState;
-    float               CursorAnim;
-    bool                CursorFollow;
-    bool                SelectedAllMouseLock;
+    ImGuiID                 ID;                     // widget id owning the text state
+    ImVector<ImWchar>       TextW;                  // edit buffer, we need to persist but can't guarantee the persistence of the user-provided buffer. so we copy into own buffer.
+    ImVector<char>          InitialText;            // backup of end-user buffer at the time of focus (in UTF-8, unaltered)
+    ImVector<char>          TempBuffer;             // temporary buffer for callback and other other operations. size=capacity.
+    int                     CurLenA, CurLenW;       // we need to maintain our buffer length in both UTF-8 and wchar format.
+    int                     BufCapacityA;           // end-user buffer capacity
+    float                   ScrollX;
+    ImGuiStb::STB_TexteditState StbState;
+    float                   CursorAnim;
+    bool                    CursorFollow;
+    bool                    SelectedAllMouseLock;
 
-    ImGuiTextEditState()                            { memset(this, 0, sizeof(*this)); }
+    // Temporarily set when active
+    ImGuiInputTextFlags     UserFlags;
+    ImGuiInputTextCallback  UserCallback;
+    void*                   UserCallbackData;
+
+    ImGuiInputTextState()                           { memset(this, 0, sizeof(*this)); }
     void                CursorAnimReset()           { CursorAnim = -0.30f; }                                   // After a user-input the cursor stays on for a while without blinking
     void                CursorClamp()               { StbState.cursor = ImMin(StbState.cursor, CurLenW); StbState.select_start = ImMin(StbState.select_start, CurLenW); StbState.select_end = ImMin(StbState.select_end, CurLenW); }
     bool                HasSelection() const        { return StbState.select_start != StbState.select_end; }
     void                ClearSelection()            { StbState.select_start = StbState.select_end = StbState.cursor; }
     void                SelectAll()                 { StbState.select_start = 0; StbState.cursor = StbState.select_end = CurLenW; StbState.has_preferred_x = false; }
-    void                OnKeyPressed(int key);
+    void                OnKeyPressed(int key);      // Cannot be inline because we call in code in stb_textedit.h implementation
 };
 
 // Windows data saved in imgui.ini file
@@ -637,11 +645,11 @@ struct ImGuiContext
     float                   HoveredIdTimer;
     ImGuiID                 ActiveId;                           // Active widget
     ImGuiID                 ActiveIdPreviousFrame;
+    ImGuiID                 ActiveIdIsAlive;                    // Active widget has been seen this frame (we can't use a bool as the ActiveId may change within the frame)
     float                   ActiveIdTimer;
-    bool                    ActiveIdIsAlive;                    // Active widget has been seen this frame
     bool                    ActiveIdIsJustActivated;            // Set at the time of activation for one frame
     bool                    ActiveIdAllowOverlap;               // Active widget allows another widget to steal active id (generally for overlapping widgets, but not always)
-    bool                    ActiveIdValueChanged;
+    bool                    ActiveIdValueChanged;               // Was the value associated to the widget changed over the course of the Active state.
     bool                    ActiveIdPreviousFrameIsAlive;
     bool                    ActiveIdPreviousFrameValueChanged;
     int                     ActiveIdAllowNavDirFlags;           // Active widget allows using directional navigation (e.g. can activate a button and move away from it)
@@ -652,7 +660,7 @@ struct ImGuiContext
     ImGuiID                 LastActiveId;                       // Store the last non-zero ActiveId, useful for animation.
     float                   LastActiveIdTimer;                  // Store the last non-zero ActiveId timer since the beginning of activation, useful for animation.
     ImGuiWindow*            MovingWindow;                       // Track the window we clicked on (in order to preserve focus). The actually window that is moved is generally MovingWindow->RootWindow.
-    ImVector<ImGuiColMod>   ColorModifiers;                     // Stack for PushStyleColor()/PopStyleColor()
+    ImVector<ImGuiColorMod>   ColorModifiers;                     // Stack for PushStyleColor()/PopStyleColor()
     ImVector<ImGuiStyleMod> StyleModifiers;                     // Stack for PushStyleVar()/PopStyleVar()
     ImVector<ImFont*>       FontStack;                          // Stack for PushFont()/PopFont()
     ImVector<ImGuiPopupRef> OpenPopupStack;                     // Which popups are open (persistent)
@@ -726,7 +734,7 @@ struct ImGuiContext
     unsigned char           DragDropPayloadBufLocal[8];         // Local buffer for small payloads
 
     // Widget state
-    ImGuiTextEditState      InputTextState;
+    ImGuiInputTextState     InputTextState;
     ImFont                  InputTextPasswordFont;
     ImGuiID                 ScalarAsInputTextId;                // Temporary text input when CTRL+clicking on a slider, etc.
     ImGuiColorEditFlags     ColorEditOptions;                   // Store user options for color edit widgets
@@ -784,8 +792,8 @@ struct ImGuiContext
         HoveredIdTimer = 0.0f;
         ActiveId = 0;
         ActiveIdPreviousFrame = 0;
+        ActiveIdIsAlive = 0;
         ActiveIdTimer = 0.0f;
-        ActiveIdIsAlive = false;
         ActiveIdIsJustActivated = false;
         ActiveIdAllowOverlap = false;
         ActiveIdValueChanged = false;
@@ -1197,13 +1205,13 @@ namespace ImGui
     // Widgets low-level behaviors
     IMGUI_API bool          ButtonBehavior(const ImRect& bb, ImGuiID id, bool* out_hovered, bool* out_held, ImGuiButtonFlags flags = 0);
     IMGUI_API bool          DragBehavior(ImGuiID id, ImGuiDataType data_type, void* v, float v_speed, const void* v_min, const void* v_max, const char* format, float power);
-    IMGUI_API bool          SliderBehavior(const ImRect& bb, ImGuiID id, ImGuiDataType data_type, void* v, const void* v_min, const void* v_max, const char* format, float power, ImGuiSliderFlags flags = 0);
+    IMGUI_API bool          SliderBehavior(const ImRect& bb, ImGuiID id, ImGuiDataType data_type, void* v, const void* v_min, const void* v_max, const char* format, float power, ImGuiSliderFlags flags, ImRect* out_grab_bb);
     IMGUI_API bool          SplitterBehavior(const ImRect& bb, ImGuiID id, ImGuiAxis axis, float* size1, float* size2, float min_size1, float min_size2, float hover_extend = 0.0f, float hover_visibility_delay = 0.0f);
     IMGUI_API bool          TreeNodeBehavior(ImGuiID id, ImGuiTreeNodeFlags flags, const char* label, const char* label_end = NULL);
     IMGUI_API bool          TreeNodeBehaviorIsOpen(ImGuiID id, ImGuiTreeNodeFlags flags = 0);                     // Consume previous SetNextTreeNodeOpened() data, if any. May return true when logging
     IMGUI_API void          TreePushRawID(ImGuiID id);
 
-    IMGUI_API bool          InputTextEx(const char* label, char* buf, int buf_size, const ImVec2& size_arg, ImGuiInputTextFlags flags, ImGuiTextEditCallback callback = NULL, void* user_data = NULL);
+    IMGUI_API bool          InputTextEx(const char* label, char* buf, int buf_size, const ImVec2& size_arg, ImGuiInputTextFlags flags, ImGuiInputTextCallback callback = NULL, void* user_data = NULL);
     IMGUI_API bool          InputScalarAsWidgetReplacement(const ImRect& bb, ImGuiID id, const char* label, ImGuiDataType data_type, void* data_ptr, const char* format);
 
     IMGUI_API void          ColorTooltip(const char* text, const float* col, ImGuiColorEditFlags flags);
