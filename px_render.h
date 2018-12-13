@@ -2259,6 +2259,7 @@ namespace px_render {
         break;
       case GPUResource::Type::Pipeline:
         GLCHECK(glDeleteProgram(b->pipelines[pos].program));
+        b->pipelines[pos].program = 0;
         break;
       case GPUResource::Type::Texture:
         GLCHECK(glDeleteTextures(1, &b->textures[pos].texture));
