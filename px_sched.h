@@ -211,7 +211,11 @@ namespace px_sched {
       T element;
 #if PX_SCHED_CACHE_LINE_SIZE
       // Avoid false sharing between threads
-      char padding[PX_SCHED_CACHE_LINE_SIZE];
+      static const size_t PADDING_ADJUSTMENT =
+          ( PX_SCHED_CACHE_LINE_SIZE
+            - ((sizeof(state)+sizeof(version)+sizeof(element))%PX_SCHED_CACHE_LINE_SIZE)
+          ) % PX_SCHED_CACHE_LINE_SIZE;
+      char padding[PADDING_ADJUSTMENT];
 #endif
     };
     D *data_ = nullptr;
@@ -422,6 +426,11 @@ namespace px_sched {
 
     static void WorkerThreadMain(Scheduler *schd, Worker *);
 #endif 
+
+#ifdef PX_SCHED_CONFIG_SINGLE_THREAD 
+    ObjectPool<Task> tasks_;
+    ObjectPool<Counter> counters_;
+#endif // PX_SCHED_CONFIG_SINGLE_THREAD
 
   };
 
