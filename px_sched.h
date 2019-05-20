@@ -112,8 +112,8 @@ namespace px_sched {
 // PX_SCHED_CHECK_FN before including this header.
 #ifndef PX_SCHED_CHECK_FN
 #  if PX_SCHED_DOES_CHECKS
-#    include <cstdlib>
-#    include <cstdio>
+#    include <stdlib.h>
+#    include <stdio.h>
 #    define PX_SCHED_CHECK_FN(cond, ...) \
         if (!(cond)) { \
           printf("-- PX_SCHED ERROR: -------------------\n"); \
@@ -153,6 +153,65 @@ namespace px_sched {
     uint16_t thread_num_tries_on_idle = 16;   // number of tries before suspend the thread
     uint32_t thread_sleep_on_idle_in_microseconds = 5; // time spent waiting between tries
     MemCallbacks mem_callbacks;
+  };
+
+  // -- Atomic -----------------------------------------------------------------
+  template<class T>
+  struct Atomic {
+  #if PX_SCHED_IMP_SINGLE_THREAD
+    T data = {};
+    Atomic() = default;
+    ~Atomic() = default;
+    explicit Atomic(const T&d) : data(d) {}
+    bool compare_exchange_strong(T &current, const T &next) {
+        if (data == current) {
+            data = next;
+            return true;
+        }
+        current = data;
+        return false;
+    }
+    bool compare_exchange_weak(T &current, const T &next) {
+        return compare_exchange_strong(current,next);
+    }
+    const T load() const { return data; }
+    void store(const T& v) { data = v; }
+    T fetch_add(const T&v) {
+        T fetch(data);
+        data += v;
+        return fetch;
+    }
+    T fetch_sub(const T&v) {
+        T fetch(data);
+        data -= v;
+        return fetch;
+    }
+    T exchange(const T&v) {
+        T old(data);
+        data = v;
+        return old;
+    }
+    bool operator==(const Atomic &other) const { return other.data == data; }
+    bool operator==(const T &other) const { return other== data; }
+  #else
+    std::atomic<T> data = {};
+    Atomic() = default;
+    ~Atomic() = default;
+    explicit Atomic(const T&d) : data(d) {}
+    bool compare_exchange_strong(T &current, const T &next) {
+        return data.compare_exchange_strong(current, next);
+    }
+    bool compare_exchange_weak(T &current, const T &next) {
+        return data.compare_exchange_weak(current, next);
+    }
+    const T load() const { return data.load(); }
+    void store(const T& v) { data = v; }
+    T fetch_add(const T&v) { return data.fetch_add(v); }
+    T fetch_sub(const T&v) { return data.fetch_sub(v); }
+    T exchange(const T&v) { return data.exchange(v); }
+    bool operator==(const Atomic &other) const { return other.data == data; }
+    bool operator==(const T &other) const { return other== data; }
+  #endif
   };
 
 
@@ -205,8 +264,9 @@ namespace px_sched {
   private:
     void newElement(uint32_t pos) const;
     void deleteElement(uint32_t pos) const;
+
     struct D {
-      mutable std::atomic<uint32_t> state = {0};
+      mutable Atomic<uint32_t> state;
       uint32_t version = 0;
       T element;
 #if PX_SCHED_CACHE_LINE_SIZE
@@ -217,9 +277,10 @@ namespace px_sched {
           ) % PX_SCHED_CACHE_LINE_SIZE;
       char padding[PADDING_ADJUSTMENT];
 #endif
-    };
+    }; // D struct
+
+    Atomic<uint32_t> next_;
     D *data_ = nullptr;
-    std::atomic<uint32_t> next_;
     size_t count_ = 0;
     MemCallbacks mem_;
   };
@@ -296,10 +357,30 @@ namespace px_sched {
     static TLS* tls();
     void wakeUpOneThread();
     SchedulerParams params_;
-    std::atomic<uint32_t> active_threads_;
-    std::atomic<uint32_t> running_ = {0};
+    Atomic<uint32_t> active_threads_;
+    Atomic<uint32_t> running_;
 
-#ifdef PX_SCHED_IMP_REGULAR_THREADS
+    struct WaitFor;
+
+    struct Task {
+      Job job;
+      uint32_t counter_id = 0;
+      Atomic<uint32_t> next_sibling_task;
+    };
+
+    struct Counter {
+      Atomic<uint32_t> task_id;
+      Atomic<uint32_t> user_count;
+      WaitFor *wait_ptr = nullptr;
+    };
+
+    ObjectPool<Task> tasks_;
+    ObjectPool<Counter> counters_;
+    uint32_t createTask(const Job &job, Sync *out_sync_obj);
+    uint32_t createCounter();
+    void unrefCounter(uint32_t counter_hnd);
+
+#if PX_SCHED_IMP_REGULAR_THREADS
     struct IndexQueue {
       ~IndexQueue() {
         PX_SCHED_CHECK_FN(list_ == nullptr, "IndexQueue Resources leaked...");
@@ -361,16 +442,6 @@ namespace px_sched {
       volatile uint16_t current_ = 0;
     };
 
-    struct Counter;
-    struct Task;
-    struct Wait;
-
-    struct Task {
-      Job job;
-      uint32_t counter_id = 0;
-      std::atomic<uint32_t> next_sibling_task = {0};
-    };
-
     struct WaitFor {
       explicit WaitFor() 
         : owner(std::this_thread::get_id())
@@ -403,34 +474,19 @@ namespace px_sched {
     struct Worker {
       std::thread thread;
        // setted by the thread when is sleep
-      std::atomic<WaitFor*> wake_up = {nullptr};
+      Atomic<WaitFor*> wake_up;
       TLS *thread_tls = nullptr;
       uint16_t thread_index = 0xFFFF;
     };
 
-    struct Counter {
-      std::atomic<uint32_t> task_id;
-      std::atomic<uint32_t> user_count;
-      WaitFor *wait_ptr = nullptr;
-    };
-
     uint16_t wakeUpThreads(uint16_t max_num_threads);
-    uint32_t createTask(const Job &job, Sync *out_sync_obj);
-    uint32_t createCounter();
-    void unrefCounter(uint32_t counter_hnd);
 
     Worker *workers_ = nullptr;
-    ObjectPool<Task> tasks_;
-    ObjectPool<Counter> counters_;
     IndexQueue ready_tasks_;
 
     static void WorkerThreadMain(Scheduler *schd, Worker *);
 #endif 
 
-#ifdef PX_SCHED_CONFIG_SINGLE_THREAD 
-    ObjectPool<Task> tasks_;
-    ObjectPool<Counter> counters_;
-#endif // PX_SCHED_CONFIG_SINGLE_THREAD
 
   };
 
@@ -488,7 +544,7 @@ namespace px_sched {
   //-- Optional: Spinlock ------------------------------------------------------
   class Spinlock {
   public:
-    Spinlock() : owner_(std::thread::id()), count_(0) {}
+    Spinlock() : owner_(std::thread::id()) {}
 
     ~Spinlock() {
       lock();
@@ -503,7 +559,7 @@ namespace px_sched {
       PX_SCHED_CHECK_FN(owner_ == tid, "Invalid Spinlock::unlock owner mistmatch");
       count_--;
       if (count_ == 0) {
-        owner_ = std::thread::id();
+        owner_.store(std::thread::id());
       }
     }
 
@@ -521,7 +577,7 @@ namespace px_sched {
       return false;
     }
   private:
-    std::atomic<std::thread::id> owner_ ;
+    Atomic<std::thread::id> owner_ ;
     uint32_t count_;
   };
 
@@ -547,16 +603,16 @@ namespace px_sched {
     mem_ = mem_cb;
     data_ = static_cast<D*>(mem_.alloc_fn(sizeof(D)*count));
     for(uint32_t i = 0; i < count; ++i) {
-      data_[i].state = 0xFFFu<< kVerDisp;
+      data_[i].state.store(0xFFFu<< kVerDisp);
     }
     count_ = count;
-    next_ = 0;
+    next_.store(0);
   }
 
   template<class T>
   inline void ObjectPool<T>::reset() {
     count_ = 0;
-    next_ = 0;
+    next_.store(0);
     if (data_) {
       mem_.free_fn(data_);
       data_ = nullptr;
@@ -630,7 +686,7 @@ namespace px_sched {
       if (d.state.compare_exchange_strong(prev, next)) {
         if ((next & kRefMask) == 1) {
           deleteElement(pos);
-          d.state = 0;
+          d.state.store(0);
         }
         return;
       }
@@ -658,7 +714,7 @@ namespace px_sched {
         if ((next & kRefMask) == 1) {
           f(d.element);
           deleteElement(pos);
-          d.state = 0;
+          d.state.store(0);
         }
         return;
       }
@@ -738,7 +794,7 @@ namespace px_sched {
   Scheduler::TLS* Scheduler::tls() {
 #ifdef PX_SCHED_ATLERNATIVE_TLS
     static std::unordered_map<std::thread::id, TLS> data;
-    static std::atomic<uint32_t> in_use = {0};
+    static Atomic<uint32_t> in_use = {0};
     for(;;) {
       uint32_t expected = 0;
       if (in_use.compare_exchange_weak(expected, 1)) break;
@@ -816,23 +872,129 @@ namespace px_sched {
   }
 }
 
+// Common to all implementations of px_sched (Single Threaded and Multi Threaded)
+namespace px_sched {
+  uint32_t Scheduler::createCounter() {
+    uint32_t hnd = counters_.adquireAndRef();
+    Counter *c = &counters_.get(hnd);
+    c->task_id.store(0);
+    c->user_count.store(0);
+    c->wait_ptr = nullptr;
+    return hnd;
+  }
+
+  uint32_t Scheduler::createTask(const Job &job, Sync *sync_obj) {
+    uint32_t ref = tasks_.adquireAndRef();
+    Task *task = &tasks_.get(ref);
+    task->job = job;
+    task->counter_id = 0;
+    task->next_sibling_task.store(0);
+    if (sync_obj) {
+      bool new_counter = !counters_.ref(sync_obj->hnd);
+      if (new_counter) {
+        sync_obj->hnd = createCounter();
+      }
+      task->counter_id = sync_obj->hnd;
+    }
+    return ref;
+  }
+
+  void Scheduler::incrementSync(Sync *s) {
+    bool new_counter = false;
+    if (!counters_.ref(s->hnd)) {
+      s->hnd = createCounter();
+      new_counter = true;
+    }
+    Counter &c = counters_.get(s->hnd);
+    c.user_count.fetch_add(1);
+    if (!new_counter) {
+      unrefCounter(s->hnd);
+    }
+  }
+
+  void Scheduler::decrementSync(Sync *s) {
+    if (counters_.ref(s->hnd)) {
+      Counter &c = counters_.get(s->hnd);
+      uint32_t prev = c.user_count.fetch_sub(1);
+      if (prev == 1) {
+        // last one should unref twice
+        unrefCounter(s->hnd);
+      }
+      unrefCounter(s->hnd);
+    }
+  }
+}
+
 #if PX_SCHED_IMP_SINGLE_THREAD
-// Implementation with no threads (single threaded) every added Job it is
-// executed inmediately
+
 namespace px_sched {
   Scheduler::Scheduler() {}
   Scheduler::~Scheduler() {}
-  void Scheduler::init(const SchedulerParams &) {}
-  void Scheduler::stop() {}
-  void Scheduler::run(const Job &job, Sync *) { Job j(job); j(); }
-  void Scheduler::runAfter(Sync, const Job &job, Sync *) { Job j(job); j();}
-  void Scheduler::waitFor(Sync) {}
-  uint32_t Scheduler::numPendingTasks(Sync){ return 0; }
+  void Scheduler::init(const SchedulerParams &) {
+    tasks_.init(params_.max_number_tasks, params_.mem_callbacks);
+    counters_.init(params_.max_number_tasks, params_.mem_callbacks);
+  }
+  void Scheduler::stop() {
+    tasks_.reset();
+    counters_.reset();
+  }
+  void Scheduler::run(const Job &job, Sync *s) {
+    Job j(job);
+    j();
+    decrementSync(s);
+  }
+
+  void Scheduler::runAfter(Sync trigger, const Job &job, Sync *s) {
+    if (counters_.ref(trigger.hnd)) {
+      uint32_t t_ref = createTask(job, s);
+      Counter *c = &counters_.get(trigger.hnd);
+      for(;;) {
+        uint32_t current = c->task_id.load();
+        if (c->task_id.compare_exchange_strong(current, t_ref)) {
+          Task *task = &tasks_.get(t_ref);
+          task->next_sibling_task.store(current);
+          break;
+        }
+      }
+      unrefCounter(trigger.hnd);
+    } else {
+      run(job, s);
+    }
+  }
+
+  void Scheduler::waitFor(Sync s) {
+    PX_SCHED_CHECK_FN(!(counters_.ref(s.hnd)), "Invalid, on SingleThreaded mode we can not wait for a sync object...");
+  }
+
+  uint32_t Scheduler::numPendingTasks(Sync s){
+    return counters_.refCount(s.hnd);
+  }
+
   void Scheduler::getDebugStatus(char *buffer, size_t buffer_size) {
     if (buffer_size) buffer[0] = 0;
   }
-  void Scheduler::incrementSync(Sync *) {}
-  void Scheduler::decrementSync(Sync *) {}
+
+  void Scheduler::unrefCounter(uint32_t hnd) {
+    if (counters_.ref(hnd)) {
+      counters_.unref(hnd);
+      Scheduler *schd = this;
+      counters_.unref(hnd, [schd](Counter &c) {
+        // wake up all tasks 
+        uint32_t tid = c.task_id.load();
+        while (schd->tasks_.ref(tid)) {
+          Task &task = schd->tasks_.get(tid);
+          uint32_t next_tid = task.next_sibling_task.load(); 
+          uint32_t counter_id = task.counter_id;
+          task.next_sibling_task.store(0);
+          task.job(); // execute the task
+          schd->tasks_.unref(tid);
+          schd->unrefCounter(counter_id);
+          tid = next_tid;
+        }
+      });
+    }
+  }
+
   void Scheduler::wakeUpOneThread() {}
 } // end of px namespace
 #endif // PX_SCHED_IMP_SINGLE_THREAD
@@ -842,14 +1004,14 @@ namespace px_sched {
 #include <thread>
 namespace px_sched {
   Scheduler::Scheduler() {
-    active_threads_ = 0;
+    active_threads_.store(0);
   }
 
   Scheduler::~Scheduler() { stop(); }
 
   void Scheduler::init(const SchedulerParams &_params) {
     stop();
-    running_ = true;
+    running_.store(true);
     params_ = _params;
     if (params_.max_running_threads == 0) {
       params_.max_running_threads = static_cast<uint16_t>(std::thread::hardware_concurrency());
@@ -871,8 +1033,8 @@ namespace px_sched {
   }
 
   void Scheduler::stop() {
-    if (running_) {
-      running_ = false;
+    if (running_.load()) {
+      running_.store(false);
       for(uint16_t i = 0; i < params_.num_threads; ++i) {
         wakeUpThreads(params_.num_threads);
       }
@@ -954,31 +1116,6 @@ namespace px_sched {
     #undef _ADD
   }
 
-  uint32_t Scheduler::createCounter() {
-    uint32_t hnd = counters_.adquireAndRef();
-    Counter *c = &counters_.get(hnd);
-    c->task_id = 0;
-    c->user_count = 0;
-    c->wait_ptr = nullptr;
-    return hnd;
-  }
-
-  uint32_t Scheduler::createTask(const Job &job, Sync *sync_obj) {
-    uint32_t ref = tasks_.adquireAndRef();
-    Task *task = &tasks_.get(ref);
-    task->job = job;
-    task->counter_id = 0;
-    task->next_sibling_task = 0;
-    if (sync_obj) {
-      bool new_counter = !counters_.ref(sync_obj->hnd);
-      if (new_counter) {
-        sync_obj->hnd = createCounter();
-      }
-      task->counter_id = sync_obj->hnd;
-    }
-    return ref;
-  }
-
   uint16_t Scheduler::wakeUpThreads(uint16_t max_num_threads) {
     uint16_t total_woken_up = 0;
     for(uint32_t i = 0; (i < params_.num_threads) && (total_woken_up < max_num_threads); ++i) {
@@ -1004,14 +1141,14 @@ namespace px_sched {
   }
 
   void Scheduler::run(const Job &job, Sync *sync_obj) {
-    PX_SCHED_CHECK_FN(running_, "Scheduler not running");
+    PX_SCHED_CHECK_FN(running_.load(), "Scheduler not running");
     uint32_t t_ref = createTask(job, sync_obj);
     ready_tasks_.push(t_ref);
     wakeUpOneThread();
   }
 
   void Scheduler::runAfter(Sync _trigger, const Job& _job, Sync* _sync_obj) {
-    PX_SCHED_CHECK_FN(running_, "Scheduler not running");
+    PX_SCHED_CHECK_FN(running_.load(), "Scheduler not running");
     uint32_t trigger = _trigger.hnd;
     uint32_t t_ref = createTask(_job, _sync_obj);
     bool valid = counters_.ref(trigger);
@@ -1021,7 +1158,7 @@ namespace px_sched {
         uint32_t current = c->task_id.load();
         if (c->task_id.compare_exchange_strong(current, t_ref)) {
           Task *task = &tasks_.get(t_ref);
-          task->next_sibling_task = current;
+          task->next_sibling_task.store(current);
           break;
         }
       }
@@ -1055,11 +1192,11 @@ namespace px_sched {
       Scheduler *schd = this;
       counters_.unref(hnd, [schd](Counter &c) {
         // wake up all tasks 
-        uint32_t tid = c.task_id;
+        uint32_t tid = c.task_id.load();
         while (schd->tasks_.ref(tid)) {
           Task &task = schd->tasks_.get(tid);
-          uint32_t next_tid = task.next_sibling_task; 
-          task.next_sibling_task = 0;
+          uint32_t next_tid = task.next_sibling_task.load(); 
+          task.next_sibling_task.store(0);
           schd->ready_tasks_.push(tid);
           schd->wakeUpOneThread();
           schd->tasks_.unref(tid);
@@ -1069,31 +1206,6 @@ namespace px_sched {
           c.wait_ptr->signal();
         }
       });
-    }
-  }
-
-  void Scheduler::incrementSync(Sync *s) {
-    bool new_counter = false;
-    if (!counters_.ref(s->hnd)) {
-      s->hnd = createCounter();
-      new_counter = true;
-    }
-    Counter &c = counters_.get(s->hnd);
-    c.user_count.fetch_add(1);
-    if (!new_counter) {
-      unrefCounter(s->hnd);
-    }
-  }
-
-  void Scheduler::decrementSync(Sync *s) {
-    if (counters_.ref(s->hnd)) {
-      Counter &c = counters_.get(s->hnd);
-      uint32_t prev = c.user_count.fetch_sub(1);
-      if (prev == 1) {
-        // last one should unref twice
-        unrefCounter(s->hnd);
-      }
-      unrefCounter(s->hnd);
     }
   }
 
@@ -1114,21 +1226,21 @@ namespace px_sched {
     for(;;) {
       { // wait for new activity
         auto current_num = schd->active_threads_.fetch_sub(1);
-        if (!schd->running_) return;
+        if (!schd->running_.load()) return;
         if (schd->ready_tasks_.in_use() == 0 ||
             current_num > schd->params_.max_running_threads) {
           WaitFor wf;
-          schd->workers_[id].wake_up = &wf;
+          schd->workers_[id].wake_up.store(&wf);
           wf.wait();
-          if (!schd->running_) return;
+          if (!schd->running_.load()) return;
         }
         schd->active_threads_.fetch_add(1);
-        schd->workers_[id].wake_up = nullptr;
+        schd->workers_[id].wake_up.store(nullptr);
       }
       auto ttl = ttl_value;
       { // do some work
         uint32_t task_ref;
-        while (ttl && schd->running_ ) {
+        while (ttl && schd->running_.load()) {
           if (!schd->ready_tasks_.pop(&task_ref)) {
             ttl--;
             if (ttl_wait) std::this_thread::sleep_for(std::chrono::microseconds(ttl_wait));
