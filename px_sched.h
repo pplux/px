@@ -941,7 +941,7 @@ namespace px_sched {
   void Scheduler::run(const Job &job, Sync *s) {
     Job j(job);
     j();
-    decrementSync(s);
+    if (s) decrementSync(s);
   }
 
   void Scheduler::runAfter(Sync trigger, const Job &job, Sync *s) {
