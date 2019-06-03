@@ -900,14 +900,12 @@ namespace px_sched {
   }
 
   void Scheduler::incrementSync(Sync *s) {
-    bool new_counter = false;
     if (!counters_.ref(s->hnd)) {
       s->hnd = createCounter();
-      new_counter = true;
     }
     Counter &c = counters_.get(s->hnd);
-    c.user_count.fetch_add(1);
-    if (!new_counter) {
+    uint32_t prev = c.user_count.fetch_add(1);
+    if (prev != 0) {
       unrefCounter(s->hnd);
     }
   }
