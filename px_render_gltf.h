@@ -45,6 +45,7 @@ namespace px_render {
         Geometry_Position   = 1<<0, // Vec3f
         Geometry_Normal     = 1<<1, // Vec3f
         Geometry_TexCoord0  = 1<<2, // Vec2f
+        Geometry_Tangent    = 1<<3, // Vec3f
         Material            = 1<<10,
         ComputeBounds       = 1<<11,
         All = 0xFFFFFFFF
@@ -299,13 +300,16 @@ namespace px_render {
               default:
                 assert(!"Invalid format...");
             }
-            // sampler data...
-            const tinygltf::Sampler &sampler = model.samplers[sampler_idx];
-            new_texture.info.magnification_filter = TranslateFiltering(sampler.magFilter);
-            new_texture.info.minification_filter  = TranslateFiltering(sampler.minFilter);
-            new_texture.info.wrapping[0] = TranslateWrapping(sampler.wrapR);
-            new_texture.info.wrapping[1] = TranslateWrapping(sampler.wrapS);
-            new_texture.info.wrapping[2] = TranslateWrapping(sampler.wrapT);
+
+            if (model.samplers.size() > 0)
+            {
+                const tinygltf::Sampler &sampler = model.samplers[sampler_idx]; 
+                new_texture.info.magnification_filter = TranslateFiltering(sampler.magFilter);
+                new_texture.info.minification_filter = TranslateFiltering(sampler.minFilter);
+                new_texture.info.wrapping[0] = TranslateWrapping(sampler.wrapR);
+                new_texture.info.wrapping[1] = TranslateWrapping(sampler.wrapS);
+                new_texture.info.wrapping[2] = TranslateWrapping(sampler.wrapT);
+            }
 
             new_texture.tex = ctx->createTexture(new_texture.info);
             texture_dl.fillTextureCommand().set_texture(new_texture.tex).set_data(&image.image[0]).set_build_mipmap(true);
@@ -399,6 +403,7 @@ namespace px_render {
       + (flags&Flags::Geometry_Position?  sizeof(float)*3: 0)
       + (flags&Flags::Geometry_Normal?    sizeof(float)*3: 0)
       + (flags&Flags::Geometry_TexCoord0? sizeof(float)*2: 0)
+      + (flags&Flags::Geometry_Tangent?   sizeof(float)*4: 0)
       ;
 
     GLTF_Imp::NodeTraverse(model,
@@ -536,10 +541,10 @@ namespace px_render {
               AttribWritter w_position  = [](float *w, uint32_t p) {};
               AttribWritter w_normal    = [](float *w, uint32_t p) {};
               AttribWritter w_texcoord0 = [](float *w, uint32_t p) {};
+              AttribWritter w_tangent   = [](float *w, uint32_t p) {};
 
               uint32_t vertex_stride_float = vertex_size/sizeof(float);
               for (const auto &attrib : gltf_p.attributes) {
-
                 AttribWritter *writter = nullptr;
                 unsigned int max_components = 0;
                 if ((flags & Flags::Geometry_Position) && attrib.first.compare("POSITION") == 0) {
@@ -551,6 +556,9 @@ namespace px_render {
                 } else if ((flags & Flags::Geometry_TexCoord0) && attrib.first.compare("TEXCOORD_0") == 0) {
                   writter = &w_texcoord0;
                   max_components = 2;
+                } else if ((flags & Flags::Geometry_Tangent) && attrib.first.compare("TANGENT") == 0) {
+                  writter = &w_tangent;
+                  max_components = 4;
                 }
 
                 if (!writter) continue;
@@ -667,6 +675,12 @@ namespace px_render {
                   w_texcoord0(&vertex_data[vertex_offset+(current_vertex+i)*vertex_stride_float], i+min_vertex_index);
                 }
                 vertex_offset += 2;
+              }
+              if (flags & Flags::Geometry_Tangent) {
+                  for (uint32_t i = 0; i <= max_vertex_index - min_vertex_index; ++i) {
+                      w_texcoord0(&vertex_data[vertex_offset + (current_vertex + i)*vertex_stride_float], i + min_vertex_index);
+                  }
+                  vertex_offset += 4;
               }
 
               for (uint32_t i = 0; i < primitive.index_count; ++i) {
