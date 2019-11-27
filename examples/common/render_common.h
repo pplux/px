@@ -52,6 +52,7 @@ void render(px_render::RenderContext *ctx, px_sched::Scheduler *sched);
 
 #include "../deps/imgui.cpp"
 #include "../deps/imgui_draw.cpp"
+#include "../deps/imgui_widgets.cpp"
 
 struct {
   px_render::RenderContext ctx;
