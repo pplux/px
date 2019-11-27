@@ -159,7 +159,7 @@ void ImGui_Impl_pxrender_RenderDrawData(ImDrawData* draw_data, px_render::Displa
 
   for(int n = 0; n < draw_data->CmdListsCount; ++n) {
     const ImDrawList *cmd_list = draw_data->CmdLists[n];
-    size_t required_vertex_size = cmd_list->VtxBuffer.Size * sizeof(ImDrawVert);
+    uint32_t required_vertex_size = cmd_list->VtxBuffer.Size * sizeof(ImDrawVert);
     if (required_vertex_size > PRS.vertex_size) {
       auto old = PRS.vertex;
       dl_output->destroy(old);
@@ -171,7 +171,7 @@ void ImGui_Impl_pxrender_RenderDrawData(ImDrawData* draw_data, px_render::Displa
       .set_data(cmd_list->VtxBuffer.Data)
       .set_size(required_vertex_size)
       ;
-    size_t required_index_size = cmd_list->IdxBuffer.Size *sizeof(ImDrawIdx);
+    uint32_t required_index_size = cmd_list->IdxBuffer.Size *sizeof(ImDrawIdx);
     if (required_index_size > PRS.index_size) {
       auto old = PRS.index;
       dl_output->destroy(old);
