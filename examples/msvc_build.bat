@@ -1,5 +1,5 @@
-REM Copyright 2018 (C) PpluX (Jose L. Hidalgo)
-REM To Compile the examples under MSVC (2017 Community)
+REM Copyright 2018-2020 (C) PpluX (Jose L. Hidalgo)
+REM To Compile the examples under MSVC (2019 Community)
 @ECHO OFF
 SET INPUT=%1
 SET OUTPUT_D=%INPUT:.cpp=_debug.exe%
