@@ -34,17 +34,17 @@
 #include "../deps/gb_math.h"
 #include "../deps/sokol_app.h"
 
+#ifdef Always
+#undef Always // linux: X11.h --> WTF
+#undef None   // linux: X11.h --> WTF
+#endif
+
 #define PX_RENDER_IMPLEMENTATION
 #define PX_RENDER_IMGUI_IMPLEMENTATION
 #define PX_SCHED_IMPLEMENTATION
 #include "../../px_render.h"
 #include "../../px_sched.h"
 #include "../../px_render_imgui.h"
-
-#ifdef Always
-#undef Always // linux: X11.h --> WTF
-#undef None   // linux: X11.h --> WTF
-#endif
 
 void init(px_render::RenderContext *ctx, px_sched::Scheduler *sched);
 void finish(px_render::RenderContext *ctx, px_sched::Scheduler *sched);
