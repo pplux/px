@@ -31,6 +31,7 @@
 // gb_math, sokol, px_render & px_sched implementations
 #define GB_MATH_IMPLEMENTATION
 #define SOKOL_IMPL
+#define SOKOL_WIN32_FORCE_MAIN  
 #include "../deps/gb_math.h"
 #include "../deps/sokol_app.h"
 
@@ -203,6 +204,7 @@ sapp_desc sokol_main(int argc, char **argv) {
   d.event_cb = input;
   d.width = 1024;
   d.height = 768;
+  d.high_dpi = true;
   d.window_title = "PX-Render Test";
   setup_input;
   return d;
