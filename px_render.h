@@ -439,7 +439,7 @@ namespace px_render {
       PROP_ARRAY(Buffer, kMaxVertexAttribs, buffer);
       PROP(Vec4, scissor, {});
       PROP(Mat4, model_matrix, Mat4::Identity());
-      PROP_PTR(uint8_t, uniforms);
+      PROP_PTR(void, uniforms);
     };
     
     struct RenderData {
@@ -1100,7 +1100,7 @@ namespace px_render {
             RenderContext::Data *ctx = c->pipeline.ctx->data_;
             auto pi = GetResource(ctx, c->pipeline.id, &ctx->pipelines);
             Mem<uint8_t> mem;
-            mem.copy(c->uniforms, pi->info.uniform_size);
+            mem.copy(reinterpret_cast<const uint8_t*>(c->uniforms), pi->info.uniform_size);
             c->uniforms = nullptr;
             last.payload_index = dl->payloads.size();
             dl->payloads.push_back(std::move(mem));
@@ -2175,33 +2175,18 @@ namespace px_render {
     } else {
       GLCHECK(glDisable(GL_SCISSOR_TEST));
     }
-  }
-
-  static void BeforeRenderGeometry(RenderContext::Data *ctx) {
-    auto pi = GetResource(ctx, ctx->last_pipeline.pipeline.id, &ctx->pipelines, &ctx->back_end->pipelines);
-    auto &last_pipeline_command = ctx->last_pipeline;
 
     size_t tex_unit = 0;
     for (auto i = 0; i < kMaxTextureUnits; ++i) {
       if (pi.second->texture_uniforms_location[i] >= 0) {
-        auto ti = GetResource(ctx, last_pipeline_command.texture[i].id, &ctx->textures, &ctx->back_end->textures);
+        auto ti = GetResource(ctx, d.texture[i].id, &ctx->textures, &ctx->back_end->textures);
         if (!ti.first ) {
           OnError(ctx, "Missing texture.");
           return;
         }
         
         GLCHECK(glActiveTexture(GL_TEXTURE0+tex_unit));
-        switch (ti.first->info.type) {
-        #ifdef PX_RENDER_BACKEND_GL
-          case TextureType::T1D: GLCHECK(glBindTexture(GL_TEXTURE_1D, ti.second->texture)); break;
-        #endif
-          case TextureType::T2D: GLCHECK(glBindTexture(GL_TEXTURE_2D, ti.second->texture)); break;
-          case TextureType::T3D: GLCHECK(glBindTexture(GL_TEXTURE_3D, ti.second->texture)); break;
-          default:
-            OnError(ctx, "Invalid texture type...");
-            return;
-        }
-
+        GLCHECK(glBindTexture(ti.second->target , ti.second->texture));
         GLCHECK(glUniform1i(pi.second->texture_uniforms_location[i], tex_unit));
         tex_unit++;
       }
@@ -2211,7 +2196,7 @@ namespace px_render {
       uint32_t attrib_format = pi.first->info.attribs[i].format;
       if (attrib_format) {
         size_t buffer_index = pi.first->info.attribs[i].buffer_index;
-        size_t buffer_id = last_pipeline_command.buffer[buffer_index].id;
+        size_t buffer_id = d.buffer[buffer_index].id;
         if (!buffer_id) {
           OnError(ctx, "Expected Valid buffer (see pipeline declaration)");
           return;
@@ -2232,6 +2217,7 @@ namespace px_render {
         break;
       }
     }
+
   }
 
   static void Execute(RenderContext::Data *ctx, const DisplayList::RenderData &d, const Mem<uint8_t> *payloads) {
@@ -2241,7 +2227,6 @@ namespace px_render {
 
     if (!b.second->buffer) OnError(ctx, "Invalid Index buffer...");
 
-    BeforeRenderGeometry(ctx);
     GLCHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, b.second->buffer));
     GLCHECK(glDrawElementsInstanced(Translate(p.first->info.primitive), d.count, Translate(d.type), (void*)d.offset, d.instances));
   }
