@@ -38,13 +38,13 @@ px_render_examples = px_render_example_imgui #WIP: px_render_example_rtt px_rend
 
 all: $(px_sched_examples) $(px_render_examples)
 
-$(px_sched_examples): %: %.cpp
+$(px_sched_examples): %: ../%.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 	$(CXX) -DPX_SCHED_CONFIG_SINGLE_THREAD $(CXXFLAGS) -o $@_noMT $< $(LDFLAGS)
 
 
-$(px_render_examples): %: %.cpp
-	$(CXX) -std=c++14 -fpermissive -D linux -g -O2 -I . -o $@ $< $(LDFLAGS) -ldl -lX11
+$(px_render_examples): %: ../%.cpp
+	$(CXX) -std=c++14 -fpermissive -D linux -g -O2 -I .. -o $@ $< $(LDFLAGS) -ldl -lX11 -lXi -lXcursor
 
 .PHONY: clean tests
 clean:
