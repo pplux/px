@@ -1,5 +1,5 @@
 /* -----------------------------------------------------------------------------
-Copyright (c) 2018 Jose L. Hidalgo (PpluX)
+Copyright (c) 2018-2022 Jose L. Hidalgo (PpluX)
 
   px_mem.h - Mem management functions
   Single header file to handle Mem references, Buffers, unique_ptr/array
