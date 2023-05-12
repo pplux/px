@@ -25,7 +25,7 @@ int main(int, char **) {
   }, &end);
   for(size_t i = 0; i < 128; ++i) {
     schd.runAfter(start,[i, &data] () mutable {
-      printf("Running %lu\n",i);
+      printf("Running %zu\n",i);
       data[i] = i*2;
     }, &middle);
   }

@@ -7,10 +7,10 @@ solution "px"
     objdir "build/obj"
 
 exampleList = {
-"px_render_example_gltf.cpp",
-"px_render_example_imgui.cpp",
-"px_render_example_rtt.cpp",
-"px_render_example_triangle.cpp",
+--"px_render_example_gltf.cpp",
+--"px_render_example_imgui.cpp",
+--"px_render_example_rtt.cpp",
+--"px_render_example_triangle.cpp",
 "px_sched_example1.cpp",
 "px_sched_example2.cpp",
 "px_sched_example3.cpp",

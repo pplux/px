@@ -89,13 +89,6 @@ namespace px_sched {
 #ifndef PX_SCHED_CACHE_LINE_SIZE
 #define PX_SCHED_CACHE_LINE_SIZE 64
 #endif
-
-// **WARNING** ---> WORK IN PROGRESS <--- **WARNING** 
-// Enable if you want the threads to track resource locking, this might slow
-// down things a bit.
-#ifndef PX_SCHED_CHECK_DEADLOCKS
-#define PX_SCHED_CHECK_DEADLOCKS 0
-#endif
 // -----------------------------------------------------------------------------
 
 
@@ -157,8 +150,8 @@ namespace px_sched {
     uint16_t num_threads = 16;        // num OS threads created 
     uint16_t max_running_threads = 0; // 0 --> will be set to max hardware concurrency
     uint16_t max_number_tasks = 1024; // max number of simultaneous tasks
-    uint16_t thread_num_tries_on_idle = 16;   // number of tries before suspend the thread
-    uint32_t thread_sleep_on_idle_in_microseconds = 5; // time spent waiting between tries
+    uint16_t thread_num_tries_on_idle = 1;   // number of tries before suspend the thread
+    uint32_t thread_sleep_on_idle_in_microseconds = 1; // time spent waiting between tries
     MemCallbacks mem_callbacks;
   };
 
@@ -261,7 +254,7 @@ namespace px_sched {
     // decrements the counter, if the object is no longer valid (last ref)
     // the given function will be executed with the element
     template<class F>
-    void unref(uint32_t hnd, F f) const;
+    void unref(uint32_t hnd, F &&f) const;
 
     // returns true if the given position was a valid object
     bool ref(uint32_t hnd) const;
@@ -327,27 +320,6 @@ namespace px_sched {
     // again...
     static void set_current_thread_name(const char *name);
     static const char *current_thread_name();
-
-    // Call this method before a mutex/lock/etc... to notify the scheduler
-    static void CurrentThreadSleeps();
-
-    // call this again to notify the thread is again running
-    static void CurrentThreadWakesUp();
-
-    // Call this method before locking a resource, this will be used by the
-    // scheduler to wakeup another thread as a worker, and also can be used
-    // later to detect deadlocks (if compiled with PX_SCHED_CHECK_DEADLOCKS 1,
-    // WIP!)
-    static void CurrentThreadBeforeLockResource(const void *resource_ptr, const char *name = nullptr);
-
-    // Call this method after calling CurrentThreadBeforeLockResource, this will be
-    // used to notify the scheduler that this thread can continue working.
-    // If success is true, the lock was successful, false if the thread was not
-    // blocked but also didn't adquired the lock (try_lock)
-    static void CurrentThreadAfterLockResource(bool success);
-
-    // Call this method once the resouce is unlocked.
-    static void CurrentThreadReleasesResource(const void *resource_ptr);
 
     const SchedulerParams& params() const { return params_; }
 
@@ -464,6 +436,8 @@ namespace px_sched {
         PX_SCHED_CHECK_FN(std::this_thread::get_id() == owner,
             "WaitFor::wait can only be invoked from the thread "
             "that created the object");
+        // TODO: instead of waiting, look for tasks that could be
+        //       done from this thread.
         std::unique_lock<std::mutex> lk(mutex);
         if(!ready) {
           condition_variable.wait(lk);
@@ -487,7 +461,7 @@ namespace px_sched {
 
     struct Worker {
       std::thread thread;
-       // setted by the thread when is sleep
+       // set by the thread when is sleep
       Atomic<WaitFor*> wake_up;
       TLS *thread_tls = nullptr;
       uint16_t thread_index = 0xFFFF;
@@ -502,57 +476,6 @@ namespace px_sched {
 #endif 
 
 
-  };
-
-  //-- Optional: Mutex template to encapsultae scheduler notification ----------
-  template<class M>
-  class Mutex {
-  public:
-
-    ~Mutex() { lock(); }
-
-    void lock() {
-      std::thread::id tid = std::this_thread::get_id();
-      if (owner_ == tid) {
-        count_++;
-        return;
-      }
-      Scheduler::CurrentThreadBeforeLockResource(&mutex_);
-      mutex_.lock();
-      owner_ = tid;
-      count_ = 1;
-      Scheduler::CurrentThreadAfterLockResource(true);
-    }
-    void unlock() {
-      std::thread::id tid = std::this_thread::get_id();
-      PX_SCHED_CHECK_FN(owner_ == tid, "Invalid Mutex::unlock owner mistmatch");
-      count_--;
-      if (count_ == 0) {
-        owner_ = std::thread::id();
-        Scheduler::CurrentThreadReleasesResource(&mutex_);
-        mutex_.unlock();
-      }
-    }
-
-    bool try_lock() {
-      std::thread::id tid = std::this_thread::get_id();
-      if (owner_ == tid) {
-        count_++;
-        return true;
-      }
-      Scheduler::CurrentThreadBeforeLockResource(&mutex_);
-      bool result = mutex_.try_lock();
-      if (result) {
-        owner_ = tid;
-        count_ = 1;
-      }
-      Scheduler::CurrentThreadAfterLockResource(result);
-      return result;
-    }
-  private:
-    std::thread::id owner_ ;
-    uint32_t count_ = 0;
-    M mutex_;
   };
 
   //-- Optional: Spinlock ------------------------------------------------------
@@ -712,11 +635,11 @@ namespace px_sched {
     }
   }
 
-  // decrements the counter, if the objet is no longer valid (las ref)
+  // decrements the counter, if the object is no longer valid (last ref)
   // the given function will be executed with the element
   template<class T>
   template<class F>
-  inline void ObjectPool<T>::unref(uint32_t hnd, F f) const {
+  inline void ObjectPool<T>::unref(uint32_t hnd, F &&f) const {
     uint32_t pos = hnd & kPosMask;
     uint32_t ver = (hnd & kVerMask);
     D& d = data_[pos];
@@ -788,26 +711,11 @@ namespace px_sched {
 #include <unordered_map>
 #endif
 
-#if PX_SCHED_CHECK_DEADLOCKS
-#include <vector>
-#include <algorithm>
-#endif
-
-
 namespace px_sched {
 
   struct Scheduler::TLS {
     const char *name = nullptr;
     Scheduler *scheduler = nullptr;
-    struct Resource {
-      const void *ptr;
-      const char *name;
-    };
-    Resource next_lock = {nullptr, nullptr};
-#if PX_SCHED_CHECK_DEADLOCKS
-    std::mutex adquired_locks_m;
-    std::vector<Resource> adquired_locks;
-#endif
   };
 
   Scheduler::TLS* Scheduler::tls() {
@@ -837,58 +745,6 @@ namespace px_sched {
     return d->name;
   }
 
-  void Scheduler::CurrentThreadSleeps() {
-    CurrentThreadBeforeLockResource(nullptr);
-  }
-
-  void Scheduler::CurrentThreadWakesUp() {
-    CurrentThreadAfterLockResource(false);
-  }
-
-  void Scheduler::CurrentThreadBeforeLockResource(const void *resource_ptr, const char *name) {
-    // if the lock might work, wake up one thread to replace this one
-    TLS *d = tls();
-    if (d->scheduler && d->scheduler->running_.load()) {
-      d->scheduler->active_threads_.fetch_sub(1);
-      d->scheduler->wakeUpOneThread();
-    }
-    d->next_lock = {resource_ptr, name};
-  }
-
-  void Scheduler::CurrentThreadAfterLockResource(bool success) {
-    // mark this thread as active (so eventually one thread will step down)
-    TLS *d = tls();
-    if (d->scheduler && d->scheduler->running_.load()) {
-      d->scheduler->active_threads_.fetch_add(1);
-    }
-    if (success && d->next_lock.ptr) {
-#if PX_SCHED_CHECK_DEADLOCKS
-      std::lock_guard<std::mutex> l(d->adquired_locks_m);
-      d->adquired_locks.push_back(d->next_lock);
-#endif
-    }
-    d->next_lock = {nullptr,nullptr}; // reset
-  }
-
-  void Scheduler::CurrentThreadReleasesResource(const void *resource_ptr) {
-#if PX_SCHED_CHECK_DEADLOCKS
-    TLS *d = tls();
-    if (resource_ptr) {
-      std::lock_guard<std::mutex> l(d->adquired_locks_m);
-      auto f = d->adquired_locks.begin();
-      while (f != d->adquired_locks.end()) {
-        if (f->ptr == resource_ptr) break;
-        f++;
-      };
-      PX_SCHED_CHECK_FN(f != d->adquired_locks.end(), "Can't find resource %p as adquired", resource_ptr);
-      // replace resource with last, and pop (to avoid shifting elements in the vector)
-      std::swap(*f, d->adquired_locks.back());
-      d->adquired_locks.pop_back();
-    }
-#else
-    (void)resource_ptr;
-#endif
-  }
 }
 
 // Common to all implementations of px_sched (Single Threaded and Multi Threaded)
@@ -1088,37 +944,13 @@ namespace px_sched {
     for(size_t i = 0; i < params_.num_threads; ++i) {
       auto &w = workers_[i];
       bool is_on =(w.wake_up.load() == nullptr);
-      bool has_something_to_show = w.thread_tls->next_lock.ptr;
-#if PX_SCHED_CHECK_DEADLOCKS
-      std::lock_guard<std::mutex> l(w.thread_tls->adquired_locks_m);
-      has_something_to_show = has_something_to_show || w.thread_tls->adquired_locks.size();
-#endif
-      if (!is_on && !has_something_to_show) {
+      if (!is_on) {
         continue;
       }
       _ADD("\n  Worker: %d(%s) %s", w.thread_index, 
           is_on?"ON":"OFF",
           w.thread_tls->name? w.thread_tls->name: "-no-name-"
           );
-#if PX_SCHED_CHECK_DEADLOCKS
-      if (w.thread_tls->adquired_locks.size()) {
-        _ADD("\n    AdquiredLocks:");
-        for(auto ptr:w.thread_tls->adquired_locks) {
-          if (ptr.name) {
-            _ADD("%p(%s) ",ptr.ptr, ptr.name);
-          } else {
-            _ADD("%p ",ptr.ptr);
-          }
-        }
-      }
-#endif
-      if (w.thread_tls->next_lock.ptr) {
-        if (w.thread_tls->next_lock.name) {
-          _ADD("\n    Waiting For Lock: %p(%s)", w.thread_tls->next_lock.ptr, w.thread_tls->next_lock.name);
-        } else {
-          _ADD("\n    Waiting For Lock: %p", w.thread_tls->next_lock.ptr);
-        }
-      }
     }
     _ADD("\nReady: ");
     for(uint32_t i = 0; i < ready_tasks_.in_use_; ++i) {
@@ -1205,13 +1037,11 @@ namespace px_sched {
     PX_SCHED_TRACE_FN("WaitFor");
     if (counters_.ref(s.hnd)) {
       Counter &counter = counters_.get(s.hnd);
-      PX_SCHED_CHECK_FN(counter.wait_ptr == nullptr, "Sync object already used for waitFor operation, only one is permited");
+      PX_SCHED_CHECK_FN(counter.wait_ptr == nullptr, "Sync object already used for waitFor operation, only one is permitted");
       WaitFor wf;
       counter.wait_ptr = &wf;
       unrefCounter(s.hnd);
-      CurrentThreadSleeps(); 
       wf.wait();
-      CurrentThreadWakesUp(); 
     }
   }
 
