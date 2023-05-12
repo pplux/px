@@ -1,5 +1,5 @@
 /* -----------------------------------------------------------------------------
-Copyright (c) 2017-2022 Jose L. Hidalgo (PpluX)
+Copyright (c) 2017-2023 Jose L. Hidalgo (PpluX)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in
@@ -274,18 +274,10 @@ namespace px_sched {
     void newElement(uint32_t pos) const;
     void deleteElement(uint32_t pos) const;
 
-    struct D {
+    struct alignas(PX_SCHED_CACHE_LINE_SIZE) D {
       mutable Atomic<uint32_t> state;
       uint32_t version = 0;
       T element;
-#if PX_SCHED_CACHE_LINE_SIZE
-      // Avoid false sharing between threads
-      static const size_t PADDING_ADJUSTMENT =
-          ( PX_SCHED_CACHE_LINE_SIZE
-            - ((sizeof(state)+sizeof(version)+sizeof(element))%PX_SCHED_CACHE_LINE_SIZE)
-          ) % PX_SCHED_CACHE_LINE_SIZE;
-      char padding[PADDING_ADJUSTMENT];
-#endif
     }; // D struct
 
     mutable Atomic<uint32_t> in_use_;
@@ -304,8 +296,8 @@ namespace px_sched {
     void init(const SchedulerParams &params = SchedulerParams());
     void stop();
 
-    void run(const Job &job, Sync *out_sync_obj = nullptr);
-    void runAfter(Sync sync,const Job &job, Sync *out_sync_obj = nullptr);
+    void run(Job &&job, Sync *out_sync_obj = nullptr);
+    void runAfter(Sync sync,Job &&job, Sync *out_sync_obj = nullptr);
     void waitFor(Sync sync); //< suspend current thread 
 
     // returns the number of tasks not yet finished associated to the sync object
@@ -397,7 +389,7 @@ namespace px_sched {
 
     ObjectPool<Task> tasks_;
     ObjectPool<Counter> counters_;
-    uint32_t createTask(const Job &job, Sync *out_sync_obj);
+    uint32_t createTask(Job &&job, Sync *out_sync_obj);
     uint32_t createCounter();
     void unrefCounter(uint32_t counter_hnd);
 
@@ -612,13 +604,15 @@ namespace px_sched {
   template<class T>
   void ObjectPool<T>::newElement(uint32_t pos) const {
     new (&data_[pos].element) T;
-    in_use_.fetch_add(1);
+    uint32_t i = 1;
+    in_use_.fetch_add(i);
   }
 
   template<class T>
   void ObjectPool<T>::deleteElement(uint32_t pos) const {
     data_[pos].element.~T();
-    in_use_.fetch_sub(1);
+    uint32_t i = 1;
+    in_use_.fetch_sub(i);
   }
 
   template<class T>
@@ -909,11 +903,11 @@ namespace px_sched {
     return hnd;
   }
 
-  uint32_t Scheduler::createTask(const Job &job, Sync *sync_obj) {
+  uint32_t Scheduler::createTask(Job &&job, Sync *sync_obj) {
     PX_SCHED_TRACE_FN("CreateTask");
     uint32_t ref = tasks_.adquireAndRef();
     Task *task = &tasks_.get(ref);
-    task->job = job;
+    task->job = std::move(job);
     task->counter_id = 0;
     task->next_sibling_task.store(0);
     if (sync_obj) {
@@ -966,15 +960,14 @@ namespace px_sched {
     tasks_.reset();
     counters_.reset();
   }
-  void Scheduler::run(const Job &job, Sync *s) {
-    Job j(job);
-    j();
+  void Scheduler::run(Job &&job, Sync *s) {
+    job();
     if (s) decrementSync(s);
   }
 
-  void Scheduler::runAfter(Sync trigger, const Job &job, Sync *s) {
+  void Scheduler::runAfter(Sync trigger, Job &&job, Sync *s) {
     if (counters_.ref(trigger.hnd)) {
-      uint32_t t_ref = createTask(job, s);
+      uint32_t t_ref = createTask(std::move(job), s);
       Counter *c = &counters_.get(trigger.hnd);
       for(;;) {
         uint32_t current = c->task_id.load();
@@ -986,7 +979,7 @@ namespace px_sched {
       }
       unrefCounter(trigger.hnd);
     } else {
-      run(job, s);
+      run(std::move(job), s);
     }
   }
 
@@ -1177,19 +1170,19 @@ namespace px_sched {
     }
   }
 
-  void Scheduler::run(const Job &job, Sync *sync_obj) {
+  void Scheduler::run(Job &&job, Sync *sync_obj) {
     PX_SCHED_TRACE_FN("RunTask");
     PX_SCHED_CHECK_FN(running_.load(), "Scheduler not running");
-    uint32_t t_ref = createTask(job, sync_obj);
+    uint32_t t_ref = createTask(std::move(job), sync_obj);
     ready_tasks_.push(t_ref);
     wakeUpOneThread();
   }
 
-  void Scheduler::runAfter(Sync _trigger, const Job& _job, Sync* _sync_obj) {
+  void Scheduler::runAfter(Sync _trigger, Job&& _job, Sync* _sync_obj) {
     PX_SCHED_TRACE_FN("RunTaskAfter");
     PX_SCHED_CHECK_FN(running_.load(), "Scheduler not running");
     uint32_t trigger = _trigger.hnd;
-    uint32_t t_ref = createTask(_job, _sync_obj);
+    uint32_t t_ref = createTask(std::move(_job), _sync_obj);
     bool valid = counters_.ref(trigger);
     if (valid) {
       Counter *c = &counters_.get(trigger);

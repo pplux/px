@@ -29,7 +29,7 @@ int main(int, char **) {
   for(size_t i = 0; i < 128; ++i) {
     px_sched::Job job { task, i };
     // run a task, and notify to the given sync object
-    schd.run(job, &s);
+    schd.run(std::move(job), &s);
   }
 
   printf("Waiting for tasks to finish...\n");
