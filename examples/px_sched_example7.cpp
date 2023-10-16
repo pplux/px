@@ -18,7 +18,7 @@ public:
   void init(px_sched::Scheduler *s) {
     finish();
     sched_ = s;
-    void *ptr = sched_->params().mem_callbacks.alloc_fn(sizeof(T));
+    void *ptr = sched_->params().mem_callbacks.alloc_fn(alignof(T), sizeof(T));
     obj_ = new (ptr) T();
     read_mode_ = true;
   }

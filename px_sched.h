@@ -142,7 +142,14 @@ namespace px_sched {
 
 
   struct MemCallbacks {
-    void* (*alloc_fn)(size_t amount) = ::malloc;
+    void* (*alloc_fn)(size_t alignment, size_t amount) = [](size_t a, size_t s) {
+      // The spec requires that aligned allogs alignments can't be smaller than
+      // sizeof(void*)
+      if (a < sizeof(void*)) a = sizeof(void*);
+      void *ptr = aligned_alloc(a, s);
+      PX_SCHED_CHECK_FN(ptr != nullptr, "Invalid mem alloc");
+      return ptr;
+    };
     void (*free_fn)(void *ptr) = ::free;
   };
 
@@ -384,7 +391,7 @@ namespace px_sched {
         mem_ = mem_cb;
         size_ = max;
         in_use_ = 0;
-        list_ = static_cast<uint32_t*>(mem_.alloc_fn(sizeof(uint32_t)*size_));
+        list_ = static_cast<uint32_t*>(mem_.alloc_fn(alignof(uint32_t), sizeof(uint32_t)*size_));
         _unlock();
       }
       void push(uint32_t p) {
@@ -542,7 +549,7 @@ namespace px_sched {
   inline void ObjectPool<T>::init(uint32_t count, const MemCallbacks &mem_cb) {
     reset();
     mem_ = mem_cb;
-    data_ = static_cast<D*>(mem_.alloc_fn(sizeof(D)*count));
+    data_ = static_cast<D*>(mem_.alloc_fn(alignof(D),sizeof(D)*count));
     for(uint32_t i = 0; i < count; ++i) {
       data_[i].state.store(0xFFFu<< kVerDisp);
     }
@@ -899,7 +906,7 @@ namespace px_sched {
     counters_.init(params_.max_number_tasks, params_.mem_callbacks);
     ready_tasks_.init(params_.max_number_tasks, params_.mem_callbacks);
     PX_SCHED_CHECK_FN(workers_ == nullptr, "workers_ ptr should be null here...");
-    workers_ = static_cast<Worker*>(params_.mem_callbacks.alloc_fn(sizeof(Worker)*params_.num_threads));
+    workers_ = static_cast<Worker*>(params_.mem_callbacks.alloc_fn(alignof(Worker), sizeof(Worker)*params_.num_threads));
     for(uint16_t i = 0; i < params_.num_threads; ++i) {
       new (&workers_[i]) Worker();
       workers_[i].thread_index = i;

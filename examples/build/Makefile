@@ -1,5 +1,5 @@
 
-CXXFLAGS=-std=c++11 -pedantic -g -O2\
+CXXFLAGS=-std=c++11 -pedantic -g -O3\
 	-Wall \
 	-Wcast-align \
 	-Wcast-qual \
@@ -21,24 +21,20 @@ CXXFLAGS=-std=c++11 -pedantic -g -O2\
 	-Wstrict-overflow=5 \
 	-Wswitch-default \
 	-Wundef \
+	-fsanitize=address \
 
 UNAME_S := $(shell uname -s)
 
-
 ifeq ($(UNAME_S),Linux)
   LDFLAGS += -lpthread
-  ifeq ($(config),tsan)
-    LDFLAGS += -ltsan
-    CXXFLAGS += -fsanitize=thread -pie -fPIE
-  endif
 endif
 
 px_sched_examples = px_sched_example1 px_sched_example2 px_sched_example3 px_sched_example4 px_sched_example5 px_sched_example6 px_sched_example7 px_sched_example8
 px_render_examples = px_render_example_imgui #WIP: px_render_example_rtt px_render_example_triangle
 
-all: $(px_sched_examples) $(px_render_examples)
+all: $(px_sched_examples)
 
-$(px_sched_examples): %: ../%.cpp
+$(px_sched_examples): %: ../%.cpp ../../px_sched.h
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 	$(CXX) -DPX_SCHED_CONFIG_SINGLE_THREAD $(CXXFLAGS) -o $@_noMT $< $(LDFLAGS)
 
